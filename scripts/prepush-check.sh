@@ -46,8 +46,56 @@ warn_opt()  { echo "  ⚠ $1 no instalado (CI lo correrá): $2 -m pip install $1
 # Pick the interpreter for a tool dir: its .venv if present, else system python3.
 py_for() { local d="$1"; if [ -x "$d/.venv/bin/python" ]; then echo "$d/.venv/bin/python"; else echo "python3"; fi; }
 
+# Resolve a CLI entry point: the tool's .venv bin/<name> if present, else "".
+cli_for() { local d="$1" name="$2"; if [ -x "$d/.venv/bin/$name" ]; then echo "$d/.venv/bin/$name"; else echo ""; fi; }
+
+# Smoke tests (mirror the CI's packaged-install smoke step). Each runs in a
+# throwaway temp dir; success is silent, failure prints the tail of the log.
+
+smoke_pd() {  # $1 = pd binary
+  local pd="$1" d; d=$(mktemp -d)
+  trap 'rm -rf "$d"' RETURN
+  (
+    cd "$d"
+    cp "$REPO_ROOT/phantomdocs/tests/fixtures/smoke-org.yaml" org.yaml
+    sed -i "s/^  - id: marco/  - id: $(id -un)/" org.yaml
+    "$pd" init --org smoke --root . >/dev/null || exit 1
+    printf '# hello\n' > hello.md
+    "$pd" add hello.md --slug hello.md --category 1 --owners ceo --root . --org-yaml org.yaml >/dev/null || exit 2
+    "$pd" verify --root . 2>&1 | grep -q "verified 1 node" || exit 3
+  ) 2>&1 | tail -5
+}
+
+smoke_po() {  # $1 = po binary
+  local po="$1" d; d=$(mktemp -d)
+  trap 'rm -rf "$d"' RETURN
+  (
+    cd "$d"
+    "$po" new-org --id smoke --name "Smoke Org" --sector ngo --lang en --template ngo >/dev/null || exit 1
+    "$po" add-department --org organizations/smoke/org.yaml --id ops --name Operations --access-policy level-2 >/dev/null || exit 2
+    "$po" add-role --org organizations/smoke/org.yaml --id lead --name "Team Lead" --department ops --access-level level-2 >/dev/null || exit 3
+    "$po" add-actor --org organizations/smoke/org.yaml --id maria --role lead --tool email >/dev/null || exit 4
+    "$po" validate --org organizations/smoke/org.yaml >/dev/null || exit 5
+    "$po" build --org organizations/smoke/org.yaml --out "$d/dist" >/dev/null || exit 6
+    find "$d/dist" -name SOUL.md | grep -q . || exit 7
+  ) 2>&1 | tail -5
+}
+
+smoke_pm() {  # $1 = pm binary
+  local pm="$1" d; d=$(mktemp -d)
+  trap 'rm -rf "$d"' RETURN
+  (
+    cd "$d"
+    "$pm" derive-manifest \
+      --org "$REPO_ROOT/phantommeet/tests/fixtures/org.smoke.yaml" \
+      --base "$REPO_ROOT/phantommeet/tests/fixtures/base.smoke.yaml" \
+      --out "$d/smoke-derived.yaml" >/dev/null || exit 1
+    "$pm" validate --manifest "$d/smoke-derived.yaml" 2>&1 | grep -q "OK" || exit 2
+  ) 2>&1 | tail -5
+}
+
 # ---------------------------------------------------------------------------
-# phantomdocs — ruff check + ruff format --check + bandit + pytest
+# phantomdocs — ruff check + ruff format --check + bandit + pytest + smoke
 # ---------------------------------------------------------------------------
 if [ "$CHECK_PHANTOMDOCS" = "1" ]; then
   echo "== phantomdocs =="
@@ -61,6 +109,13 @@ if [ "$CHECK_PHANTOMDOCS" = "1" ]; then
     warn_opt bandit "$PY"
   fi
   "$PY" -m pytest -q                     && note_ok "pytest"      || note_fail "pytest"
+
+  PD=$(cli_for "." pd)
+  if [ -n "$PD" ]; then
+    if smoke_pd "$PD"; then note_ok "smoke (init+add+verify)"; else note_fail "smoke (init+add+verify)"; fi
+  else
+    echo "  ⚠ pd no instalado (CI lo correrá): pip install -e ."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -83,6 +138,13 @@ if [ "$CHECK_PHANTOMORG" = "1" ]; then
     warn_opt mypy "$PY"
   fi
   "$PY" -m pytest -q                            && note_ok "pytest"      || note_fail "pytest"
+
+  PO=$(cli_for "." po)
+  if [ -n "$PO" ]; then
+    if smoke_po "$PO"; then note_ok "smoke (new-org+build)"; else note_fail "smoke (new-org+build)"; fi
+  else
+    echo "  ⚠ po no instalado (CI lo correrá): pip install -e ."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -100,6 +162,13 @@ if [ "$CHECK_PHANTOMMEET" = "1" ]; then
     warn_opt bandit "$PY"
   fi
   "$PY" -m pytest -q                     && note_ok "pytest"      || note_fail "pytest"
+
+  PM=$(cli_for "." pm)
+  if [ -n "$PM" ]; then
+    if smoke_pm "$PM"; then note_ok "smoke (derive+validate)"; else note_fail "smoke (derive+validate)"; fi
+  else
+    echo "  ⚠ pm no instalado (CI lo correrá): pip install -e ."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
