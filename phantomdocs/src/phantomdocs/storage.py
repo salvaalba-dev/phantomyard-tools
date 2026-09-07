@@ -23,6 +23,7 @@ import sys
 import tempfile
 from urllib.parse import urlparse
 
+from .content import FileContent, write_content
 from .fsutil import fsync_dir
 from .identity import content_hash as _content_hash
 from .identity import is_valid_hex64
@@ -37,13 +38,32 @@ def _require_hash(content_hash: str) -> None:
         raise StorageError(f"invalid content hash: {content_hash!r}")
 
 
-def _run_checked(args: list[str], *, stdin: bytes | None = None, text: bool = False):
+def _run_checked(args: list[str], *, stdin=None, text: bool = False, output=None):
     """Run a subprocess without a shell.
 
     Args are an explicit list (no shell=True) and any remote command is built
     from validated 64-hex hashes, so there is no injection surface. The
     returncode is checked by the caller.
     """
+    if isinstance(stdin, FileContent) or output is not None:
+        # File descriptors keep document bytes out of subprocess PIPE buffers.
+        # Diagnostics also go to disk; retain only a bounded error excerpt.
+        with tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as discard:
+            if isinstance(stdin, FileContent):
+                stdin.file.seek(0)
+            proc = subprocess.run(  # nosec B603
+                args,
+                stdin=stdin.file if isinstance(stdin, FileContent) else None,
+                stdout=output.file if output is not None else discard,
+                stderr=errors,
+                check=False,
+            )
+            errors.seek(0)
+            proc.stderr = errors.read(65536)
+            proc.stdout = b""
+            if output is not None:
+                output.file.seek(0)
+            return proc
     return subprocess.run(  # nosec B603
         args, input=stdin, capture_output=True, text=text, check=False
     )
@@ -108,7 +128,7 @@ class LocalBackend:
         _require_hash(content_hash)
         return os.path.join(self.root, "blobs", content_hash[:2], content_hash)
 
-    def put(self, content_hash: str, data: bytes) -> str:
+    def put(self, content_hash: str, data: bytes | FileContent) -> str:
         shard = self._shard_dir(content_hash, create=True)
         path = os.path.join(shard, content_hash)
         if os.path.lexists(path):
@@ -127,7 +147,7 @@ class LocalBackend:
                 # fdopen has taken ownership. The context manager closes it
                 # before an exception reaches the cleanup handler.
                 fd_unclaimed = False
-                f.write(data)
+                write_content(f, data)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, path)
@@ -145,7 +165,7 @@ class LocalBackend:
             raise
         return path
 
-    def get(self, content_hash: str) -> bytes:
+    def get(self, content_hash: str, *, streaming=False):
         shard = self._shard_dir(content_hash, create=False)
         path = os.path.join(shard, content_hash)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -159,11 +179,13 @@ class LocalBackend:
                 raise StorageError(f"blob is not a regular file: {content_hash}")
             if st.st_nlink > 1:
                 raise StorageError(f"refusing hardlinked blob: {content_hash}")
-            data = f.read()
+            data = FileContent.from_stream(f) if streaming else f.read()
         # Content-addressed store: verify the bytes against the requested
         # hash on read, so a mutated blob is refused (integrity on the read
         # path, not only under `pd verify`).
         if _content_hash(data) != content_hash:
+            if isinstance(data, FileContent):
+                data.close()
             raise StorageError(f"content hash mismatch for {content_hash}")
         return data
 
@@ -226,7 +248,7 @@ class SshBackend:
         _require_hash(content_hash)
         return f"{self.base}/blobs/{content_hash[:2]}/{content_hash}"
 
-    def put(self, content_hash: str, data: bytes) -> str:
+    def put(self, content_hash: str, data: bytes | FileContent) -> str:
         remote = self.remote_path(content_hash)
         parent = os.path.dirname(remote)
         tmp = f"{remote}.tmp"
@@ -243,8 +265,23 @@ class SshBackend:
             raise StorageError(self._err(proc, "ssh put failed"))
         return f"ssh://{self.target}:{self.port}{remote}"
 
-    def get(self, content_hash: str) -> bytes:
+    def get(self, content_hash: str, *, streaming=False):
         remote = self.remote_path(content_hash)
+        if streaming:
+            # Preserve adapter-specific SSH options (including identity key).
+            data = FileContent()
+            try:
+                proc = _run_checked(
+                    self._ssh_args() + [f"cat {_shell_quote(remote)}"], output=data
+                )
+                if proc.returncode != 0:
+                    raise StorageError(self._err(proc, "ssh get failed"))
+                if _content_hash(data) != content_hash:
+                    raise StorageError(f"content hash mismatch for {content_hash}")
+                return data
+            except BaseException:
+                data.close()
+                raise
         proc = _run_checked(self._ssh_args() + [f"cat {_shell_quote(remote)}"])
         if proc.returncode != 0:
             raise StorageError(self._err(proc, "ssh get failed (blob not found?)"))
@@ -301,13 +338,13 @@ class GdriveBackend:
                 "(the persona's Google Drive tooling)"
             )
 
-    def put(self, content_hash: str, data: bytes) -> str:
+    def put(self, content_hash: str, data: bytes | FileContent) -> str:
         _require_hash(content_hash)
         self._require_tool()
-        with tempfile.NamedTemporaryFile(prefix="pd-", delete=False) as f:
-            tmp = f.name
-            f.write(data)
-        try:
+        with tempfile.TemporaryDirectory(prefix="pd-upload-") as directory:
+            tmp = os.path.join(directory, "content")
+            with open(tmp, "wb") as f:
+                write_content(f, data)
             proc = _run_checked(
                 _workspace_command(self.workspace_py)
                 + [
@@ -320,8 +357,6 @@ class GdriveBackend:
                 ],
                 text=True,
             )
-        finally:
-            os.unlink(tmp)
         if proc.returncode != 0:
             detail = proc.stderr.strip()
             raise StorageError(
@@ -344,12 +379,12 @@ class GdriveBackend:
         # authenticated document state. A buggy or malicious workspace.py
         # (wrong id, wrong bytes, a stale id, or a lie about success) fails here
         # instead of being committed as a document location.
-        downloaded = _gdrive_download(self.workspace_py, file_id)
-        if _content_hash(downloaded) != content_hash:
-            raise StorageError(
-                f"drive read-back mismatch for {content_hash}: the returned "
-                "reference does not resolve to the uploaded content"
-            )
+        with _gdrive_download(self.workspace_py, file_id, streaming=True) as downloaded:
+            if _content_hash(downloaded) != content_hash:
+                raise StorageError(
+                    f"drive read-back mismatch for {content_hash}: the returned "
+                    "reference does not resolve to the uploaded content"
+                )
         return file_id
 
     def get(self, content_hash: str) -> bytes:
@@ -404,7 +439,7 @@ def _workspace_command(workspace_py: str) -> list[str]:
     return [resolved]
 
 
-def _gdrive_download(workspace_py: str, file_id: str) -> bytes:
+def _gdrive_download(workspace_py: str, file_id: str, *, streaming=False):
     """Download a Drive file's raw bytes via the persona's workspace tooling."""
     with tempfile.NamedTemporaryFile(prefix="pd-gdrive-", delete=False) as f:
         tmp = f.name
@@ -421,7 +456,7 @@ def _gdrive_download(workspace_py: str, file_id: str) -> bytes:
                 else "gdrive download failed"
             )
         with open(tmp, "rb") as f:
-            return f.read()
+            return FileContent.from_stream(f) if streaming else f.read()
     finally:
         try:
             os.unlink(tmp)
@@ -463,7 +498,8 @@ def read_location(
     *,
     root: str,
     backend: str | None = None,
-) -> bytes:
+    streaming: bool = False,
+):
     """Read one declared document location and verify its content hash.
 
     A document can have replica locations. The stored location is authoritative
@@ -474,7 +510,7 @@ def read_location(
     """
     _require_hash(content_hash)
     if "ref" in location:
-        data = read_reference(location_uri(location))[0]
+        data = read_reference(location_uri(location), streaming=streaming)[0]
     else:
         path = location.get("path")
         stored_backend = location.get("backend")
@@ -485,16 +521,22 @@ def read_location(
         ):
             # put() records the complete blob URI, not a backend root.
             # Resolving it as a root would append the shard/hash twice.
-            data = read_reference(path)[0]
+            data = read_reference(path, streaming=streaming)[0]
         else:
             store = resolve_backend(backend) if backend else LocalBackend(root)
-            data = store.get(content_hash)
+            data = (
+                store.get(content_hash, streaming=True)
+                if streaming
+                else store.get(content_hash)
+            )
     if _content_hash(data) != content_hash:
+        if isinstance(data, FileContent):
+            data.close()
         raise StorageError(f"content hash mismatch for {content_hash}")
     return data
 
 
-def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, dict]:
+def read_reference(uri: str, workspace_py: str | None = None, *, streaming=False):
     """Read the bytes of an external object and return ``(bytes, location)``.
 
     "Add by reference": index an object that already lives somewhere else,
@@ -513,13 +555,13 @@ def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, di
         workspace_py = os.environ.get("PHANTOMDOCS_WORKSPACE_PY", "workspace.py")
     if uri.startswith("gdrive://"):
         file_id = uri[len("gdrive://") :]
-        data = _gdrive_download(workspace_py, file_id)
+        data = _gdrive_download(workspace_py, file_id, streaming=streaming)
         return data, {"backend": "gdrive", "ref": file_id}
     if uri.startswith("file://"):
         path = uri[len("file://") :]
         try:
             with open(path, "rb") as f:
-                data = f.read()
+                data = FileContent.from_stream(f) if streaming else f.read()
         except OSError as exc:
             raise StorageError(f"cannot read reference {path!r}: {exc}") from exc
         return data, {"backend": "file", "ref": path}
@@ -531,6 +573,21 @@ def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, di
             else (parsed.hostname or "")
         )
         remote = parsed.path or ""
+        if streaming:
+            data = FileContent()
+            try:
+                store = SshBackend(
+                    parsed.hostname or "", parsed.username, parsed.port or 22
+                )
+                proc = _run_checked(
+                    store._ssh_args() + [f"cat {_shell_quote(remote)}"], output=data
+                )
+                if proc.returncode != 0:
+                    raise StorageError(store._err(proc, "ssh read failed"))
+                return data, {"backend": "ssh", "ref": _ssh_canonical(parsed)}
+            except BaseException:
+                data.close()
+                raise
         proc = _run_checked(
             [
                 "ssh",
@@ -556,7 +613,7 @@ def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, di
     # bare local path
     try:
         with open(uri, "rb") as f:
-            data = f.read()
+            data = FileContent.from_stream(f) if streaming else f.read()
     except OSError as exc:
         raise StorageError(f"cannot read reference {uri!r}: {exc}") from exc
     return data, {"backend": "file", "ref": uri}

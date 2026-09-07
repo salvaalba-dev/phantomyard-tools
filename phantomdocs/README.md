@@ -120,6 +120,24 @@ phantomdocs/
   `workspace.py`; `pd update` install lands once the tool is published as a
   release.
 
+## Large documents
+
+CLI document operations use temporary disk snapshots and 1 MiB copy/hash
+chunks instead of buffering entire documents in Python memory. This covers
+`add` (including references), `get --cat`, `verify`, and rollback reads.
+SSH document transfers use file descriptors; GDrive uploads and read-back
+verification use files. Hashes and version MACs retain their existing format.
+
+Allow temporary disk space proportional to document size (multiple copies
+can coexist during a transfer). Downloads are verified before `get --cat`
+emits document bytes. Temporary files are closed after use, including failed
+operations. The persona's external GDrive tool controls its own memory use.
+
+Library callers can pass an owned `FileContent` snapshot to `add_document`
+or backend `put`, and request `streaming=True` from reference/location reads
+and local/SSH `get`. Close returned snapshots with a context manager. Existing
+byte-based calls remain supported and still allocate the full result.
+
 ## Dependency
 
 PhantomDocs consumes the PhantomOrg `org.yaml` schema (org/version 1:

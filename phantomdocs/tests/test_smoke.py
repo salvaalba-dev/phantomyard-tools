@@ -1,6 +1,7 @@
 import glob
 import os
 import shlex
+import tracemalloc
 from unittest import mock
 
 import yaml
@@ -10,6 +11,7 @@ from phantomdocs.audit import append as audit_append
 from phantomdocs.audit import head as audit_head
 from phantomdocs.audit import verify_chain as audit_verify_chain
 from phantomdocs.cli import main
+from phantomdocs.content import FileContent
 
 # A minimal PhantomOrg org.yaml for ACL enforcement in the CLI tests. Two
 # actors: "roberto" (cfo, level-2 -> categories [1,2]) and "elena"
@@ -1589,10 +1591,16 @@ def test_ssh_versions_read_stored_blob_locations(tmp_path):
         command = shlex.split(args[-1])
         if "stdin" in kwargs:
             assert command[0] == "mkdir"
-            remote_files[command[-1]] = kwargs["stdin"]
+            source = kwargs["stdin"]
+            remote_files[command[-1]] = (
+                source.file.read() if isinstance(source, FileContent) else source
+            )
             return mock.Mock(returncode=0, stdout=b"", stderr=b"")
         assert command[0] == "cat"
         path = command[1]
+        if "output" in kwargs:
+            kwargs["output"].file.write(remote_files.get(path, b""))
+            kwargs["output"].file.seek(0)
         return mock.Mock(
             returncode=0 if path in remote_files else 1,
             stdout=remote_files.get(path, b""),
@@ -1647,3 +1655,41 @@ def test_ssh_versions_read_stored_blob_locations(tmp_path):
         result = _run(["verify", "--root", root])
         assert result.exit_code != 0
         assert "ssh read failed: No such file" in result.output
+
+
+def test_large_add_and_reference_have_bounded_memory(tmp_path):
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    source = tmp_path / "large.bin"
+    chunk = b"z" * (1024 * 1024)
+    with source.open("wb") as output:
+        for _ in range(24):
+            output.write(chunk)
+    tracemalloc.start()
+    try:
+        for source_args, slug in (
+            ([str(source)], "stored.bin"),
+            (["--ref", str(source)], "ref.bin"),
+        ):
+            result = _run(
+                [
+                    "add",
+                    *source_args,
+                    "--slug",
+                    slug,
+                    "--owners",
+                    "cfo",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                ]
+            )
+            assert result.exit_code == 0, result.output
+        result = _run(["verify", "--root", root])
+        assert result.exit_code == 0, result.output
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 8 * 1024 * 1024

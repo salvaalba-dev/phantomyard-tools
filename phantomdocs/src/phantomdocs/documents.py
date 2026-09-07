@@ -35,6 +35,7 @@ from .audit import append as audit_append
 from .audit import head as audit_head
 from .audit import max_seq as audit_max_seq
 from .audit import reconcile as audit_reconcile
+from .content import FileContent
 from .identity import component_for_folder, content_hash, doc_version_mac, node_mac
 from .manifest import (
     MANIFEST_FILENAME,
@@ -55,8 +56,7 @@ from .signing import (
 )
 from .storage import (
     LocalBackend,
-    location_uri,
-    read_reference,
+    read_location,
     resolve_backend,
 )
 
@@ -520,7 +520,7 @@ class DocumentService:
     def add_document(
         self,
         *,
-        content: bytes,
+        content: bytes | FileContent,
         ref_location: dict[str, Any] | None,
         slug: str,
         category: str | None,
@@ -774,20 +774,20 @@ class DocumentService:
             # Read the target version's content and verify it against its hash.
             ch = target["contentHash"]
             loc = target.get("locations", [{}])[0]
-            if "ref" in loc:
-                data = read_reference(location_uri(loc))[0]
-            else:
-                store = resolve_backend(backend) if backend else LocalBackend(self.root)
-                data = store.get(ch)
-            if content_hash(data) != ch:
-                raise DocumentError("rollback target content hash mismatch")
+            with read_location(
+                loc, ch, root=self.root, backend=backend, streaming=True
+            ) as data:
+                size = len(data)
+                restored_mac = doc_version_mac(
+                    current["parentMac"], current["mac"], current["slug"], data
+                )
 
             # The new version chains off the current version, so restoring old
             # content yields a fresh identity (issues #44/#55). Derive slug and
             # urn from `current` (the document being rolled back), not `target`,
             # so the node's tree position always matches its URN path.
             parent_mac = current["parentMac"]
-            mac = doc_version_mac(parent_mac, current["mac"], current["slug"], data)
+            mac = restored_mac
             effective_owners = list(current.get("owners", []) or [])
             new_locations = list(target.get("locations", []) or [])
             node = {
@@ -798,7 +798,7 @@ class DocumentService:
                 "slug": current["slug"],
                 "category": category,
                 "contentHash": ch,
-                "size": len(data),
+                "size": size,
                 "owners": effective_owners,
                 "locations": new_locations,
                 "meta": dict(current.get("meta", {})),

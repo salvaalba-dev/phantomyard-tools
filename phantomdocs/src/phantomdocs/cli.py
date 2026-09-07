@@ -28,6 +28,7 @@ from .audit import read as audit_read
 from .audit import reconcile as audit_reconcile
 from .audit import sequence_issues as audit_sequence_issues
 from .audit import verify_chain as audit_verify_chain
+from .content import FileContent
 from .derive import derive_manifest as derive_from_org
 from .documents import DocumentError, DocumentService
 from .identity import (
@@ -226,6 +227,7 @@ def _read_document_from_locations(node, root: str, backend: str | None):
                     node["contentHash"],
                     root=root,
                     backend=backend,
+                    streaming=True,
                 ),
                 location,
             )
@@ -390,17 +392,17 @@ def add(
 
     _validate_slug(slug, "slug")
 
+    actor_id, _org = _require_acl(org_yaml, actor)
     if ref:
         try:
-            content, ref_location = read_reference(ref)
+            content, ref_location = read_reference(ref, streaming=True)
         except StorageError as exc:
             raise click.ClickException(str(exc))
     else:
         with open(path, "rb") as f:
-            content = f.read()
+            content = FileContent.from_stream(f)
         ref_location = None
 
-    actor_id, _org = _require_acl(org_yaml, actor)
     try:
         service = DocumentService(root, org_yaml, actor_id, nsec_file)
         result = service.add_document(
@@ -414,6 +416,8 @@ def add(
         )
     except DocumentError as exc:
         raise click.ClickException(str(exc))
+    finally:
+        content.close()
 
     if result.get("unchanged"):
         click.echo(f"unchanged: {result['urn']}")
@@ -469,7 +473,8 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
     else:
         click.echo(f"{node['urn']} -> {location.get('path', '')}")
     if data is not None:
-        sys.stdout.buffer.write(data)
+        with data:
+            data.copy_to(sys.stdout.buffer)
 
 
 @main.command()
@@ -600,19 +605,20 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
                     issues.append("missing locations")
                 for index, loc in enumerate(locations, 1):
                     try:
-                        data = read_location(loc, ch, root=root, backend=backend)
+                        data = read_location(
+                            loc, ch, root=root, backend=backend, streaming=True
+                        )
                     except StorageError as exc:
                         issues.append(f"location {index} read failed: {exc}")
                         continue
-                    if (
-                        doc_version_mac(
+                    with data:
+                        actual_mac = doc_version_mac(
                             node["parentMac"],
                             node.get("previous"),
                             node["slug"],
                             data,
                         )
-                        != node["mac"]
-                    ):
+                    if actual_mac != node["mac"]:
                         issues.append(f"location {index} MAC chain mismatch")
         else:
             if (
