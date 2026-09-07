@@ -1,3 +1,5 @@
+import os
+import sys
 from unittest import mock
 
 import pytest
@@ -47,7 +49,7 @@ def test_local_backend_rejects_bad_hash(tmp_path):
 def test_resolve_backend_local():
     b = resolve_backend("local:///tmp/x")
     assert isinstance(b, LocalBackend)
-    assert b.root == "/tmp/x"
+    assert b.root == os.path.abspath("/tmp/x")
 
 
 def test_resolve_backend_local_two_slash():
@@ -60,7 +62,7 @@ def test_resolve_backend_local_two_slash():
 def test_resolve_backend_bare_path():
     b = resolve_backend("/some/dir")
     assert isinstance(b, LocalBackend)
-    assert b.root.endswith("/some/dir")
+    assert b.root == os.path.abspath("/some/dir")
 
 
 def test_resolve_backend_ssh():
@@ -83,9 +85,9 @@ def test_gdrive_backend_put_returns_file_id():
     h = _content_hash(b"x")
 
     def fake_run(args, **kwargs):
-        if args[1] == "drive" and args[2] == "download":
+        if "drive" in args and "download" in args:
             # Read-back: the tool returns the uploaded bytes on download.
-            with open(args[4], "wb") as f:
+            with open(args[args.index("download") + 2], "wb") as f:
                 f.write(b"x")
             return mock.Mock(returncode=0, stdout="", stderr="")
         return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
@@ -120,10 +122,10 @@ def test_gdrive_backend_put_passes_content_hash_flag():
     upload_calls = []
 
     def fake_run(args, **kwargs):
-        if args[1] == "drive-upload":
+        if "drive-upload" in args:
             upload_calls.append(args)
-        elif args[1] == "drive" and args[2] == "download":
-            with open(args[4], "wb") as f:
+        elif "drive" in args and "download" in args:
+            with open(args[args.index("download") + 2], "wb") as f:
                 f.write(b"x")  # read-back
             return mock.Mock(returncode=0, stdout="", stderr="")
         return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
@@ -290,3 +292,12 @@ def test_read_location_uses_stored_ssh_uri_without_backend_override():
 
     resolve.assert_called_once_with(location["path"])
     store.get.assert_called_once_with(h)
+
+
+def test_workspace_python_script_uses_python_on_windows():
+    """A configured .py workspace tool must be executable on Windows."""
+    from phantomdocs.storage import _workspace_command
+
+    script = r"C:\\tools\\workspace.py"
+    with mock.patch("phantomdocs.storage.os.name", "nt"):
+        assert _workspace_command(script) == [sys.executable, script]
