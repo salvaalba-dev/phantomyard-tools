@@ -1438,3 +1438,119 @@ def test_rollback_rejects_cross_document_target(tmp_path):
     data = yaml.safe_load((tmp_path / "manifest.yaml").read_text(encoding="utf-8"))
     a_nodes = [n for n in data["nodes"] if n["urn"] == "urn:demo:doc:a.txt"]
     assert len(a_nodes) == 1
+
+
+def test_unchanged_add_requires_existing_owner(tmp_path):
+    """An identical re-add must still enforce the existing document's owners."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "x.md"
+    doc.write_text("same bytes", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "x.md",
+                "--owners",
+                "roberto",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ],
+            actor="roberto",
+        ).exit_code
+        == 0
+    )
+
+    # elena can read category-1 but is not an owner. The prior implementation
+    # returned "unchanged" before reaching the write ACL.
+    r = _run(
+        ["add", str(doc), "--slug", "x.md", "--org-yaml", org, "--root", root],
+        actor="elena",
+    )
+    assert r.exit_code != 0
+    assert "denied" in r.output
+
+
+def test_get_falls_back_to_a_healthy_replica(tmp_path):
+    """get --cat skips an unavailable first location and reads a later replica."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "a.txt"
+    doc.write_text("replica content", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "a.txt",
+                "--owners",
+                "cfo",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ]
+        ).exit_code
+        == 0
+    )
+
+    manifest_path = tmp_path / "manifest.yaml"
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    node = data["nodes"][0]
+    original = node["locations"][0]
+    node["locations"] = [
+        {"backend": "file", "ref": f"{tmp_path}/missing-replica.txt"},
+        original,
+    ]
+    manifest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    r = _run(
+        ["get", "a.txt", "--cat", "--org-yaml", org, "--root", root],
+        actor="roberto",
+    )
+    assert r.exit_code == 0, r.output
+    assert "replica content" in r.output
+
+
+def test_verify_checks_every_declared_replica(tmp_path):
+    """A broken secondary location must make verify fail rather than be ignored."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "a.txt"
+    doc.write_text("replica content", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "a.txt",
+                "--owners",
+                "cfo",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ]
+        ).exit_code
+        == 0
+    )
+
+    manifest_path = tmp_path / "manifest.yaml"
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    data["nodes"][0]["locations"].append(
+        {"backend": "file", "ref": f"{tmp_path}/missing-replica.txt"}
+    )
+    manifest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    r = _run(["verify", "--root", root])
+    assert r.exit_code != 0
+    assert "location 2 read failed" in r.output
