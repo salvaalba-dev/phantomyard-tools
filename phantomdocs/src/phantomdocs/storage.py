@@ -121,14 +121,23 @@ class LocalBackend:
         # its content address. os.replace replaces a symlink at the
         # destination rather than writing through it.
         fd, tmp = tempfile.mkstemp(dir=shard, prefix=".blob-", suffix=".tmp")
+        fd_unclaimed = True
         try:
             with os.fdopen(fd, "wb") as f:
+                # fdopen has taken ownership. The context manager closes it
+                # before an exception reaches the cleanup handler.
+                fd_unclaimed = False
                 f.write(data)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, path)
             fsync_dir(shard)
         except BaseException:
+            if fd_unclaimed:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 os.unlink(tmp)
             except OSError:
