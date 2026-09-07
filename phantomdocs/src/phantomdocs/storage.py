@@ -483,10 +483,12 @@ def read_location(
             and isinstance(path, str)
             and path.startswith("ssh://")
         ):
-            store = resolve_backend(path)
+            # put() records the complete blob URI, not a backend root.
+            # Resolving it as a root would append the shard/hash twice.
+            data = read_reference(path)[0]
         else:
             store = resolve_backend(backend) if backend else LocalBackend(root)
-        data = store.get(content_hash)
+            data = store.get(content_hash)
     if _content_hash(data) != content_hash:
         raise StorageError(f"content hash mismatch for {content_hash}")
     return data

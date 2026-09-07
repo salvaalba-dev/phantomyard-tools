@@ -1,5 +1,6 @@
 import glob
 import os
+import shlex
 from unittest import mock
 
 import yaml
@@ -1573,3 +1574,76 @@ def test_audit_hash_matches_durable_bytes(tmp_path):
 
     assert audit_head(str(tmp_path)) == (1, expected)
     assert audit_verify_chain(str(tmp_path)) == []
+
+
+def test_ssh_versions_read_stored_blob_locations(tmp_path):
+    """Real add/get/verify routing with only the SSH process replaced."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    remote_files = {}
+
+    def ssh(args, **kwargs):
+        assert args[-2] == "user@example.test"
+        assert args[args.index("-p") + 1] == "2222"
+        command = shlex.split(args[-1])
+        if "stdin" in kwargs:
+            assert command[0] == "mkdir"
+            remote_files[command[-1]] = kwargs["stdin"]
+            return mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        assert command[0] == "cat"
+        path = command[1]
+        return mock.Mock(
+            returncode=0 if path in remote_files else 1,
+            stdout=remote_files.get(path, b""),
+            stderr=b"" if path in remote_files else b"No such file",
+        )
+
+    doc = tmp_path / "remote.txt"
+    with mock.patch("phantomdocs.storage._run_checked", side_effect=ssh):
+        for content in ("first version", "second version"):
+            doc.write_text(content, encoding="utf-8")
+            result = _run(
+                [
+                    "add",
+                    str(doc),
+                    "--slug",
+                    "remote.txt",
+                    "--owners",
+                    "cfo",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                    "--backend",
+                    "ssh://user@example.test:2222/var/docs space",
+                ]
+            )
+            assert result.exit_code == 0, result.output
+        manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+        docs = [node for node in manifest["nodes"] if node["kind"] == "doc"]
+        assert len(docs) == 2
+        for extra, expected in (
+            ([], "second version"),
+            (["--mac", docs[0]["mac"]], "first version"),
+        ):
+            result = _run(
+                [
+                    "get",
+                    "remote.txt",
+                    "--cat",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                    *extra,
+                ]
+            )
+            assert result.exit_code == 0, result.output
+            assert expected in result.output
+        result = _run(["verify", "--root", root])
+        assert result.exit_code == 0, result.output
+        remote_files.clear()
+        result = _run(["verify", "--root", root])
+        assert result.exit_code != 0
+        assert "ssh read failed: No such file" in result.output

@@ -278,20 +278,18 @@ def test_ssh_has_quotes_remote_path(monkeypatch):
 def test_read_location_uses_stored_ssh_uri_without_backend_override():
     """An SSH location recorded during add is enough for later reads."""
     h = _content_hash(b"remote data")
-    store = mock.Mock()
-    store.get.return_value = b"remote data"
-    location = {
-        "backend": "ssh",
-        "path": "ssh://user@example.test:2222/var/phantomdocs",
-    }
-
-    with mock.patch(
-        "phantomdocs.storage.resolve_backend", return_value=store
-    ) as resolve:
+    store = SshBackend("example.test", user="user", port=2222, base="/var/docs space")
+    proc = mock.Mock(returncode=0, stdout=b"remote data", stderr=b"")
+    with mock.patch("phantomdocs.storage._run_checked", return_value=proc) as run:
+        location = {"backend": "ssh", "path": store.put(h, b"remote data")}
         assert read_location(location, h, root="/unused") == b"remote data"
-
-    resolve.assert_called_once_with(location["path"])
-    store.get.assert_called_once_with(h)
+        args = run.call_args.args[0]
+        assert args[-1] == f"cat '{store.remote_path(h)}'"
+        assert args[args.index("-p") + 1] == "2222"
+        assert args[-2] == "user@example.test"
+        proc.stdout = b"corrupt remote data"
+        with pytest.raises(StorageError, match="content hash mismatch"):
+            read_location(location, h, root="/unused")
 
 
 def test_workspace_python_script_uses_python_on_windows():
