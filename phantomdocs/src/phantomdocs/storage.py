@@ -434,6 +434,40 @@ def location_uri(location: dict) -> str:
     return f"{backend}://{ref}" if backend else ref
 
 
+def read_location(
+    location: dict,
+    content_hash: str,
+    *,
+    root: str,
+    backend: str | None = None,
+) -> bytes:
+    """Read one declared document location and verify its content hash.
+
+    A document can have replica locations. The stored location is authoritative
+    for a remote blob: an SSH "ssh://" URI recorded by put lets later get and
+    verify use that store without requiring callers to repeat --backend. A
+    supplied backend remains a legacy fallback for locations that do not
+    identify their own store.
+    """
+    _require_hash(content_hash)
+    if "ref" in location:
+        data = read_reference(location_uri(location))[0]
+    else:
+        path = location.get("path")
+        stored_backend = location.get("backend")
+        if (
+            stored_backend == "ssh"
+            and isinstance(path, str)
+            and path.startswith("ssh://")
+        ):
+            store = resolve_backend(path)
+        else:
+            store = resolve_backend(backend) if backend else LocalBackend(root)
+        data = store.get(content_hash)
+    if _content_hash(data) != content_hash:
+        raise StorageError(f"content hash mismatch for {content_hash}")
+    return data
+
 def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, dict]:
     """Read the bytes of an external object and return ``(bytes, location)``.
 
