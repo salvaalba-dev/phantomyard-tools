@@ -548,8 +548,6 @@ class DocumentService:
             urn = f"urn:{repo.org}:doc:{logical}"
 
             existing = repo.node_by_urn(urn)
-            if existing is not None and existing.get("contentHash") == ch:
-                return {"unchanged": True, "urn": urn}
             previous = existing["mac"] if existing is not None else None
             # Tree-position stability: every version of a URN must share one
             # parentMac. When versioning, the tree position is owned by the
@@ -603,6 +601,12 @@ class DocumentService:
                     f"{normalize_category(effective_category)} "
                     f"{'(owner required)' if effective_owners else ''}"
                 )
+
+            # A no-op is still an operation on an existing document.  Check
+            # the existing document's ACL first so a non-owner cannot use an
+            # identical re-add to obtain a successful write-like result.
+            if existing is not None and existing.get("contentHash") == ch:
+                return {"unchanged": True, "urn": urn}
 
             if ref_location is not None:
                 locations = [ref_location]
