@@ -5,6 +5,9 @@ from unittest import mock
 import yaml
 from click.testing import CliRunner
 
+from phantomdocs.audit import append as audit_append
+from phantomdocs.audit import head as audit_head
+from phantomdocs.audit import verify_chain as audit_verify_chain
 from phantomdocs.cli import main
 
 # A minimal PhantomOrg org.yaml for ACL enforcement in the CLI tests. Two
@@ -1554,3 +1557,19 @@ def test_verify_checks_every_declared_replica(tmp_path):
     r = _run(["verify", "--root", root])
     assert r.exit_code != 0
     assert "location 2 read failed" in r.output
+
+
+def test_audit_hash_matches_durable_bytes(tmp_path):
+    """The audit head must equal append's returned hash on every platform."""
+    expected = audit_append(
+        str(tmp_path),
+        "roberto",
+        "add",
+        "urn:demo:doc:a.txt",
+        "a" * 64,
+        "b" * 64,
+        seq=1,
+    )
+
+    assert audit_head(str(tmp_path)) == (1, expected)
+    assert audit_verify_chain(str(tmp_path)) == []
