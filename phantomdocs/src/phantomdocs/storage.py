@@ -15,11 +15,11 @@ from __future__ import annotations
 import os
 import shutil
 import stat
-import sys
 
 # subprocess is required to shell out to ssh / the persona's workspace.py.
 # Commands are built as argument lists (no shell=True) and inputs validated.
 import subprocess  # nosec B404
+import sys
 import tempfile
 from urllib.parse import urlparse
 
