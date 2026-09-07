@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import nullcontext
 
 import click
 
@@ -449,12 +450,12 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
     data = None
     if cat and node.get("kind") == "doc":
         data, location = _read_document_from_locations(node, root, backend)
-    if "ref" in location:
-        click.echo(f"{node['urn']} -> {location_uri(location)}")
-    else:
-        click.echo(f"{node['urn']} -> {location.get('path', '')}")
-    if data is not None:
-        with data:
+    with data if data is not None else nullcontext():
+        if "ref" in location:
+            click.echo(f"{node['urn']} -> {location_uri(location)}")
+        else:
+            click.echo(f"{node['urn']} -> {location.get('path', '')}")
+        if data is not None:
             data.copy_to(sys.stdout.buffer)
 
 

@@ -138,6 +138,22 @@ or backend `put`, and request `streaming=True` from reference/location reads
 and local/SSH `get`. Close returned snapshots with a context manager. Existing
 byte-based calls remain supported and still allocate the full result.
 
+## Storage recovery
+
+For stored local/SSH blobs, `get --cat`, `verify`, and `rollback` honor an
+explicit `--backend` as a replacement content-addressed store. Without that
+option they use the manifest's recorded location. If a recorded local blob
+path is missing, they also support recovery from `<root>/blobs/<prefix>/<hash>`
+under the current `--root`. A present but corrupt or unreadable original is
+reported rather than silently replaced; use `--backend` to select a backup.
+Restored bytes are hash-checked before use.
+
+Reads do not rewrite stored locations, signatures, or version MACs. A rollback
+still appends a new version. File/SSH/GDrive external references remain pinned
+to their exact URI and are not redirected by `--backend`. Get and rollback
+try the next replica when a location is malformed; verify reports each failed
+location and continues checking the others.
+
 ## Dependency
 
 PhantomDocs consumes the PhantomOrg `org.yaml` schema (org/version 1:

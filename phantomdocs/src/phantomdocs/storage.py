@@ -420,14 +420,30 @@ class GdriveBackend:
         )
 
 
+def _parse_storage_uri(uri: str):
+    """Validate connection fields before they can raise in a read loop."""
+    try:
+        parsed = urlparse(uri)
+        if parsed.scheme == "ssh":
+            if not parsed.hostname:
+                raise ValueError("SSH host is required")
+            if parsed.port is not None and parsed.port == 0:
+                raise ValueError("SSH port must be between 1 and 65535")
+        return parsed
+    except ValueError as exc:
+        raise StorageError(f"invalid storage URI {uri!r}: {exc}") from exc
+
+
 def resolve_backend(uri: str):
     """Build a backend from a URI (``local://``, ``ssh://``, ``gdrive://``).
 
     A path without a scheme is treated as a local root.
     """
+    if not isinstance(uri, str) or not uri or "\x00" in uri:
+        raise StorageError("backend URI must be a non-empty string without NUL")
     if "://" not in uri:
         return LocalBackend(uri)
-    parsed = urlparse(uri)
+    parsed = _parse_storage_uri(uri)
     scheme = parsed.scheme
     if scheme == "local":
         # ``local://<root>`` puts the root in netloc; ``local:///abs`` puts it
@@ -512,6 +528,35 @@ def location_uri(location: dict) -> str:
     return f"{backend}://{ref}" if backend else ref
 
 
+def _validate_location(location):
+    if not isinstance(location, dict):
+        raise StorageError("location must be a mapping")
+    backend = location.get("backend", "")
+    if not isinstance(backend, str) or backend not in (
+        "",
+        "local",
+        "file",
+        "ssh",
+        "gdrive",
+    ):
+        raise StorageError("location backend must be local, file, ssh, or gdrive")
+    field = "ref" if "ref" in location else "path"
+    value = location.get(field)
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise StorageError(f"location {field} must be a non-empty string without NUL")
+
+
+def _get_blob(store, content_hash, streaming):
+    if isinstance(store, GdriveBackend):
+        raise StorageError("GDrive blobs require a file-id reference location")
+    # Content-addressed adapters validate the bytes before returning them.
+    return (
+        store.get(content_hash, streaming=True)
+        if streaming
+        else store.get(content_hash)
+    )
+
+
 @_storage_errors
 def read_location(
     location: dict,
@@ -523,18 +568,21 @@ def read_location(
 ):
     """Read one declared document location and verify its content hash.
 
-    A document can have replica locations. The stored location is authoritative
-    for a remote blob: an SSH "ssh://" URI recorded by put lets later get and
-    verify use that store without requiring callers to repeat --backend. A
-    supplied backend remains a legacy fallback for locations that do not
-    identify their own store.
+    Blob reads honor an explicit backend override. Otherwise they use the
+    recorded store; missing local paths can be restored from the current root.
+    External reference locations remain exact pointers and are never redirected.
     """
     _require_hash(content_hash)
+    _validate_location(location)
     if "ref" in location:
         data = read_reference(location_uri(location), streaming=streaming)[0]
     else:
+        if backend is not None:
+            return _get_blob(resolve_backend(backend), content_hash, streaming)
         path = location.get("path")
         stored_backend = location.get("backend")
+        if stored_backend == "ssh" and not path.startswith("ssh://"):
+            raise StorageError("stored SSH blob path must be an ssh:// URI")
         if (
             stored_backend == "ssh"
             and isinstance(path, str)
@@ -557,16 +605,16 @@ def read_location(
                     raise StorageError(
                         "stored local blob path does not match content hash"
                     )
+                try:
+                    os.lstat(path)
+                except FileNotFoundError:
+                    # A relocated backup retains authenticated location metadata.
+                    # Only absent paths fall back: corruption/permission failures
+                    # at a present location must remain visible to verify.
+                    store = LocalBackend(root)
             else:
-                store = resolve_backend(backend) if backend else LocalBackend(root)
-            data = (
-                store.get(content_hash, streaming=True)
-                if streaming
-                else store.get(content_hash)
-            )
-            # Content-addressed adapters validate the requested hash on get.
-            # Do not scan the same snapshot again at this dispatch boundary.
-            return data
+                store = LocalBackend(root)
+            return _get_blob(store, content_hash, streaming)
     return _validate_content(data, content_hash)
 
 
@@ -609,10 +657,14 @@ def read_reference(uri: str, workspace_py: str | None = None, *, streaming=False
     The returned location carries a ``ref`` key (an external object pointer),
     never a content-addressed store path.
     """
+    if not isinstance(uri, str) or not uri or "\x00" in uri:
+        raise StorageError("reference URI must be a non-empty string without NUL")
     if workspace_py is None:
         workspace_py = os.environ.get("PHANTOMDOCS_WORKSPACE_PY", "workspace.py")
     if uri.startswith("gdrive://"):
         file_id = uri[len("gdrive://") :]
+        if not file_id:
+            raise StorageError("GDrive reference requires a file id")
         data = _gdrive_download(workspace_py, file_id, streaming=streaming)
         return data, {"backend": "gdrive", "ref": file_id}
     if uri.startswith("file://"):
@@ -624,7 +676,7 @@ def read_reference(uri: str, workspace_py: str | None = None, *, streaming=False
             raise StorageError(f"cannot read reference {path!r}: {exc}") from exc
         return data, {"backend": "file", "ref": path}
     if uri.startswith("ssh://"):
-        parsed = urlparse(uri)
+        parsed = _parse_storage_uri(uri)
         target = (
             f"{parsed.username}@{parsed.hostname}"
             if parsed.username
