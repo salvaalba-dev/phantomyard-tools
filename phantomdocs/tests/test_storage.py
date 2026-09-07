@@ -8,6 +8,7 @@ from phantomdocs.storage import (
     LocalBackend,
     SshBackend,
     StorageError,
+    read_location,
     read_reference,
     resolve_backend,
 )
@@ -270,3 +271,20 @@ def test_ssh_has_quotes_remote_path(monkeypatch):
     b.has("b" * 64)
     cmd = captured["args"][-1]
     assert cmd == "test -f '/var/x; id/blobs/bb/" + "b" * 64 + "'"
+
+
+def test_read_location_uses_stored_ssh_uri_without_backend_override():
+    """An SSH location recorded during add is enough for later reads."""
+    h = _content_hash(b"remote data")
+    store = mock.Mock()
+    store.get.return_value = b"remote data"
+    location = {
+        "backend": "ssh",
+        "path": "ssh://user@example.test:2222/var/phantomdocs",
+    }
+
+    with mock.patch("phantomdocs.storage.resolve_backend", return_value=store) as resolve:
+        assert read_location(location, h, root="/unused") == b"remote data"
+
+    resolve.assert_called_once_with(location["path"])
+    store.get.assert_called_once_with(h)
