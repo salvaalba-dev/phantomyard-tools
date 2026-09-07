@@ -468,6 +468,7 @@ def read_location(
         raise StorageError(f"content hash mismatch for {content_hash}")
     return data
 
+
 def read_reference(uri: str, workspace_py: str | None = None) -> tuple[bytes, dict]:
     """Read the bytes of an external object and return ``(bytes, location)``.
 
