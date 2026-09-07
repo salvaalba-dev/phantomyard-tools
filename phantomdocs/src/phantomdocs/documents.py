@@ -1,22 +1,40 @@
 """Document application service — the mutating document workflows (issue #46).
 
-The CLI resolves the actor and the PhantomOrg org model (infrastructure) and
-delegates the domain workflow — authorize, resolve the parent, compute the
-MAC chain, store the blob, build and sign the node, mutate the manifest, and
-append the audit entry — to this service. Commands only render the result.
+The service is the *enforcement point*, not a convenience wrapper around the
+CLI (issue #69). It establishes its own security context:
 
-All failures raise :class:`DocumentError` with a user-facing message; the CLI
-maps it onto ``click.ClickException`` so the messages stay byte-identical to
-the pre-service behavior.
+  1. loads the org.yaml from a trusted location and validates its schema;
+  2. requires the claimed actor to be a declared actor in that org model;
+  3. when signing is configured, derives the signing key's pubkey and verifies
+     it maps to the claimed actor's declared ``npub`` **at mutation time** —
+     so a caller cannot assert "I am actor X" and sign with an unrelated key,
+     and cannot forge the org model to grant itself access.
+
+The caller supplies *intent* (a slug, a category, owners, content); the
+service supplies and verifies *authority*. All failures raise
+:class:`DocumentError` with a user-facing message; the CLI maps it onto
+``click.ClickException``.
 """
 
 from __future__ import annotations
 
 import os
+import stat
+import time
 from typing import Any
 
-from .access import can_write, normalize_category
+from .access import (
+    can_administer_namespace,
+    can_write,
+    key_valid_now,
+    load_org,
+    normalize_category,
+    policy_hash,
+)
 from .audit import append as audit_append
+from .audit import head as audit_head
+from .audit import max_seq as audit_max_seq
+from .audit import reconcile as audit_reconcile
 from .identity import component_for_folder, content_hash, doc_version_mac, node_mac
 from .manifest import (
     MANIFEST_FILENAME,
@@ -27,7 +45,14 @@ from .manifest import (
     save,
     urn_path,
 )
-from .signing import mutation_envelope, pubkey_from_nsec, sign_mutation
+from .signing import (
+    CRYPTO_VERSION,
+    mutation_envelope,
+    profile_envelope,
+    pubkey_from_nsec,
+    sign_mutation,
+    sign_profile,
+)
 from .storage import (
     LocalBackend,
     location_uri,
@@ -44,20 +69,63 @@ def _manifest_path(root: str) -> str:
     return os.path.join(root, MANIFEST_FILENAME)
 
 
+def _now_iso() -> str:
+    """Current UTC time as an ISO-8601 string (seconds precision)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _signing_key(nsec_file: str | None) -> str | None:
-    """Resolve the mutation-signing nsec (SPEC §9, issue #30 v2).
+    """Resolve the mutation-signing nsec (SPEC §9, issue #30 v2, #76).
 
     Precedence: ``--nsec-file`` → ``$PHANTOMDOCS_NSEC``. Returns None when the
     operator has not configured signing, in which case mutations are unsigned
     (v1 behavior).
+
+    The nsec file must be private (issue #76.1): a regular file (no symlink),
+    owned by the calling user, with mode 0600 or more restrictive. A
+    world/group-readable or writable key file is refused fail-closed.
     """
     if nsec_file:
+        _check_nsec_file(nsec_file)
         try:
             with open(nsec_file, "r", encoding="utf-8") as f:
                 return f.read().strip() or None
         except OSError as exc:
             raise DocumentError(f"cannot read --nsec-file: {exc}")
     return os.environ.get("PHANTOMDOCS_NSEC", "").strip() or None
+
+
+def _check_nsec_file(path: str) -> None:
+    """Enforce private-file hygiene on a signing key file (issue #76.1).
+
+    Rejects: symlinks, non-regular files, group/other access bits, and — on
+    POSIX — a file not owned by the calling user.
+    """
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise DocumentError(f"cannot read --nsec-file: {exc}")
+    if stat.S_ISLNK(st.st_mode):
+        raise DocumentError(f"refusing symlinked --nsec-file: {path}")
+    if not stat.S_ISREG(st.st_mode):
+        raise DocumentError(f"--nsec-file is not a regular file: {path}")
+    if os.name == "posix":
+        if st.st_uid != os.geteuid():
+            raise DocumentError(f"--nsec-file is not owned by the calling user: {path}")
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            raise DocumentError(
+                f"--nsec-file must be 0600 (or more restrictive), got "
+                f"{oct(stat.S_IMODE(st.st_mode))}: {path}"
+            )
+
+
+def _declared_npub(org: dict[str, Any], actor_id: str) -> str | None:
+    """The ``npub`` declared for ``actor_id`` in the org model, or None."""
+    for a in org.get("actors", []):
+        if isinstance(a, dict) and a.get("id") == actor_id:
+            npub = a.get("npub")
+            return npub if isinstance(npub, str) and npub.strip() else None
+    return None
 
 
 def _sign_fields(
@@ -71,13 +139,21 @@ def _sign_fields(
     locations: list[dict] | None,
     urn: str,
     ref: str | None = None,
+    seq: int | None = None,
+    prev_head: str | None = None,
+    ts: str | None = None,
+    policy_hash: str | None = None,
 ) -> dict[str, str]:
     """The ``sig`` / ``sigPubkey`` fields for a mutation, or ``{}`` unsigned.
 
     The signature binds the node MAC **and** the authorization-relevant fields
     (actor, action, category, owners, locations, urn) by signing the canonical
     mutation envelope (issue #30 v2). ``ref`` is bound only for ``tag``
-    mutations, tying the mutable ref name to its target MAC.
+    mutations, tying the mutable ref name to its target MAC. ``seq`` and
+    ``prev_head`` bind the mutation to a specific committed state (issue #73),
+    so a replayed or out-of-order mutation no longer verifies. ``ts`` is the
+    mutation timestamp, bound so key rotation/revocation (issue #76) is judged
+    against the moment the mutation was authorized.
     """
     if not nsec:
         return {}
@@ -90,6 +166,10 @@ def _sign_fields(
         locations=locations,
         urn=urn,
         ref=ref,
+        seq=seq,
+        prev_head=prev_head,
+        ts=ts,
+        policy_hash=policy_hash,
     )
     return {
         "sig": sign_mutation(nsec, envelope),
@@ -98,10 +178,224 @@ def _sign_fields(
 
 
 class DocumentService:
-    """Mutating document workflows: create a folder, add/version a doc, set a ref."""
+    """Mutating document workflows: create a folder, add/version a doc, set a ref.
 
-    def __init__(self, root: str):
+    The service resolves and verifies the security context itself (issue #69);
+    it does not accept a caller-supplied org model or a caller-asserted actor
+    as authority.
+    """
+
+    def __init__(
+        self,
+        root: str,
+        org_yaml_path: str,
+        actor_id: str,
+        nsec_file: str | None = None,
+    ):
         self.root = root
+        self.org = self._load_org(org_yaml_path)
+        self.actor_id = self._require_declared_actor(actor_id)
+        self.nsec = _signing_key(nsec_file)
+        self.policy_hash = policy_hash(self.org)
+        self._bind_key_to_actor()
+
+    # -- security context (issue #69) --
+
+    def _load_org(self, org_yaml_path: str) -> dict[str, Any]:
+        """Load the org model from a *trusted location* and validate its schema.
+
+        The org model is the root of the authorization decision; the service
+        loads it itself rather than trusting a caller-supplied dict, so a
+        caller cannot forge a permissive org to grant itself access.
+        """
+        try:
+            return load_org(org_yaml_path)
+        except (OSError, ValueError) as exc:
+            raise DocumentError(
+                f"cannot load org model from {org_yaml_path!r}: {exc}"
+            ) from exc
+
+    def _require_declared_actor(self, actor_id: str) -> str:
+        """The actor must be declared in the org model (fail-closed)."""
+        known = {
+            a.get("id")
+            for a in self.org.get("actors", [])
+            if isinstance(a, dict) and a.get("id")
+        }
+        if actor_id not in known:
+            raise DocumentError(
+                f"denied: {actor_id!r} is not an actor in the org model; "
+                "PhantomDocs refuses unmapped actors (fail-closed)"
+            )
+        return actor_id
+
+    def _bind_key_to_actor(self) -> None:
+        """Verify the signing key maps to the claimed actor (issue #69, #76).
+
+        When signing is configured, the nsec's pubkey must be a *currently
+        valid* key for the actor — declared, not revoked, and within its
+        rotation window (issue #76.2/#76.3). This is enforced at mutation time
+        (not opt-in at ``verify``), so a caller cannot assert one actor and
+        sign with another actor's key, nor sign with a revoked/expired key.
+        An actor with no declared npub cannot sign.
+        """
+        if not self.nsec:
+            return
+        signing_pubkey = pubkey_from_nsec(self.nsec)
+        npub = _declared_npub(self.org, self.actor_id)
+        if not npub:
+            raise DocumentError(
+                f"denied: actor {self.actor_id!r} has no declared npub in the "
+                "org model; cannot sign mutations on its behalf"
+            )
+        if not key_valid_now(self.org, self.actor_id, signing_pubkey):
+            raise DocumentError(
+                f"denied: signing key does not match a currently-valid declared "
+                f"npub for actor {self.actor_id!r} (revoked, rotated out, or "
+                "undeclared)"
+            )
+
+    def _require_namespace_admin(self) -> None:
+        """Only the namespace administrator may change the signing profile.
+
+        A profile transition is namespace administration, not a document
+        write: authorization is restricted to the org's root role (top of the
+        reporting hierarchy). This is a distinct, stricter gate than the
+        document ACL — a low-privilege actor who cannot write any document
+        category must also be unable to flip the namespace-wide security
+        profile. Fail-closed: an actor that is not a root role is denied even
+        though it is declared and holds a valid signing key.
+        """
+        if not can_administer_namespace(self.org, self.actor_id):
+            raise DocumentError(
+                f"denied: actor {self.actor_id!r} is not a namespace "
+                "administrator (the org's root role); only a root-role actor "
+                "may change the signing profile (fail-closed)"
+            )
+
+    # -- repository plumbing --
+
+    def _commit_transaction(
+        self,
+        repo: ManifestRepository,
+        *,
+        seq: int,
+        action: str,
+        urn: str,
+        mac: str,
+        ch: str | None,
+        sig: str | None = None,
+        sig_pubkey: str | None = None,
+        head_mac: str | None = None,
+    ) -> None:
+        """Commit one mutation as manifest + audit, under the caller's lock.
+
+        Ordering (issue #74): the audit entry is written *first*, then the
+        manifest is committed with the audit head anchor (``auditSeq`` +
+        ``auditHead``) and the mutation head (``headSeq`` + ``headMac``). A
+        crash between the two leaves the audit one entry ahead of the manifest
+        — a *detectable* state `verify` flags and `recover`/the next mutation
+        re-aligns — instead of a committed mutation with no matching audit
+        entry (lost evidence).
+
+        ``seq`` is the monotonic mutation sequence this commit advances the
+        head to (issue #73); the caller computes it from the durable audit
+        head before signing, so the signed envelope and the committed head
+        agree. The audit counter (``auditSeq``) is derived from the durable
+        log's entry count — never from the manifest — so a crash can never
+        produce a duplicate or re-used sequence number.
+
+        ``head_mac`` is the MAC of the node a mutation produces (or None for
+        ``tag``, which creates no node); it advances ``manifest.headMac`` (the
+        structural node head), distinct from ``headSeq`` (mutation counter)
+        and ``auditHead`` (canonical mutation identity).
+        """
+        # Derive the next audit sequence from the durable log (authoritative),
+        # not from the manifest: a crash between a prior append and its
+        # manifest commit leaves the log ahead, and re-deriving from the
+        # manifest would reuse a number (issue #74).
+        audit_count, _ = audit_head(self.root)
+        audit_seq = audit_count + 1
+        line_hash = audit_append(
+            self.root,
+            self.actor_id,
+            action,
+            urn,
+            mac,
+            ch,
+            sig,
+            sig_pubkey,
+            seq=seq,
+        )
+        m = repo.data["manifest"]
+        m["headSeq"] = seq
+        if head_mac is not None:
+            m["headMac"] = head_mac
+        m["auditSeq"] = audit_seq
+        m["auditHead"] = line_hash
+        save(_manifest_path(self.root), repo.data)
+
+    def _reconcile_audit(self, repo: ManifestRepository) -> None:
+        """Re-align the audit log with the manifest after a crash (issue #74).
+
+        Before computing the next head, discard any orphaned audit tail —
+        entries appended by a mutation whose manifest commit never landed — so
+        the next mutation starts from a clean, strictly-monotonic sequence.
+        Any divergence that is not a clean crash (broken chain, log behind the
+        manifest, an orphan that does not chain off the recorded head) raises
+        :class:`DocumentError` fail-closed.
+        """
+        m = repo.data["manifest"]
+        try:
+            audit_reconcile(
+                self.root,
+                int(m.get("auditSeq") or 0),
+                m.get("auditHead"),
+            )
+        except ValueError as exc:
+            raise DocumentError(
+                "audit log diverges from the manifest in a way that is not a "
+                f"clean crash; refusing to commit: {exc}"
+            ) from exc
+
+    def _enforce_signing_required(self, repo: ManifestRepository) -> None:
+        """Reject unsigned mutations when the namespace requires signatures.
+
+        A production security profile (``manifest.requireSignatures=true``)
+        demands an actor signature on every mutation. Without a configured
+        signing key the mutation would be committed unsigned, so it is refused
+        fail-closed here. Unsigned/legacy operation remains available only
+        while the flag is unset — the explicit compatibility/development mode.
+        """
+        header = repo.data["manifest"]
+        if header.get("requireSignatures") and not self.nsec:
+            raise DocumentError(
+                "denied: this namespace requires signed mutations "
+                "(manifest.requireSignatures=true) but no signing key is "
+                "configured; pass --nsec-file or set PHANTOMDOCS_NSEC, or run "
+                "`pd require-signatures off` to leave production mode"
+            )
+
+    def _next_head(self, repo: ManifestRepository) -> tuple[int, str]:
+        """The ``(seq, prev_head)`` a new mutation binds to (issue #73).
+
+        ``prev_head`` is the structural node head (``headMac``, the last
+        committed node's MAC, falling back to ``rootMac`` before the first
+        mutation) — the *node* chain a mutation builds on. ``seq`` is derived
+        from the durable audit log's authoritative counter (falling back to
+        the manifest), so the mutation sequence is strictly monotonic even
+        after a crash that orphaned an audit entry. Binding these into the
+        signed envelope makes a replay or an out-of-order re-insertion fail
+        to verify.
+        """
+        self._enforce_signing_required(repo)
+        self._reconcile_audit(repo)
+        m = repo.data["manifest"]
+        prev_head = m.get("headMac") or m["rootMac"]
+        audit_max = audit_max_seq(self.root) or 0
+        manifest_seq = int(m.get("headSeq") or 0)
+        seq = max(audit_max, manifest_seq) + 1
+        return seq, prev_head
 
     def _load_repo(self) -> ManifestRepository:
         """Load and wrap the manifest, or raise a user-facing error."""
@@ -113,24 +407,55 @@ class DocumentService:
         except ManifestError as exc:
             raise DocumentError(str(exc))
 
+    def _sign_fields(
+        self,
+        *,
+        mac: str,
+        action: str,
+        category: str,
+        owners: list[str] | None,
+        locations: list[dict] | None,
+        urn: str,
+        ref: str | None = None,
+        seq: int | None = None,
+        prev_head: str | None = None,
+        ts: str | None = None,
+    ) -> dict[str, str]:
+        return _sign_fields(
+            self.nsec,
+            mac=mac,
+            actor=self.actor_id,
+            action=action,
+            category=category,
+            owners=owners,
+            locations=locations,
+            urn=urn,
+            ref=ref,
+            seq=seq,
+            prev_head=prev_head,
+            ts=ts,
+            policy_hash=self.policy_hash,
+        )
+
+    # -- workflows --
+
     def create_folder(
         self,
-        org: dict[str, Any],
-        actor_id: str,
         *,
         name: str,
         parent: str | None,
         category: str,
         owners: list[str],
-        nsec_file: str | None,
     ) -> dict[str, Any]:
         """Create a folder node (a link in the chained MAC hierarchy)."""
         category = normalize_category(category)
-        if not can_write(org, actor_id, category, list(owners)):
-            raise DocumentError(f"denied: {actor_id} cannot write {category}")
+        if not can_write(self.org, self.actor_id, category, list(owners)):
+            raise DocumentError(f"denied: {self.actor_id} cannot write {category}")
 
         with manifest_lock(_manifest_path(self.root)):
             repo = self._load_repo()
+            seq, prev_head = self._next_head(repo)
+            ts = _now_iso()
             parent_mac = repo.root_mac
             parent_path = ""
             if parent:
@@ -156,40 +481,44 @@ class DocumentService:
                 "owners": list(owners),
                 "meta": {},
                 "relations": {},
-                "actor": actor_id,
+                "actor": self.actor_id,
                 "action": "mkdir",
+                "seq": seq,
+                "prevHead": prev_head,
+                "cryptoVersion": CRYPTO_VERSION,
+                "policyHash": self.policy_hash,
+                "ts": ts,
             }
             node.update(
-                _sign_fields(
-                    _signing_key(nsec_file),
+                self._sign_fields(
                     mac=mac,
-                    actor=actor_id,
                     action="mkdir",
                     category=category,
                     owners=list(owners),
                     locations=None,
                     urn=urn,
+                    seq=seq,
+                    prev_head=prev_head,
+                    ts=ts,
                 )
             )
             repo.add_node(node)
-            save(_manifest_path(self.root), repo.data)
+            self._commit_transaction(
+                repo,
+                seq=seq,
+                action="mkdir",
+                urn=urn,
+                mac=mac,
+                ch=None,
+                sig=node.get("sig"),
+                sig_pubkey=node.get("sigPubkey"),
+                head_mac=mac,
+            )
 
-        audit_append(
-            self.root,
-            actor_id,
-            "mkdir",
-            urn,
-            mac,
-            None,
-            node.get("sig"),
-            node.get("sigPubkey"),
-        )
         return {"path": path, "urn": urn, "mac": mac}
 
     def add_document(
         self,
-        org: dict[str, Any],
-        actor_id: str,
         *,
         content: bytes,
         ref_location: dict[str, Any] | None,
@@ -198,12 +527,13 @@ class DocumentService:
         folder: str | None,
         owners: list[str],
         backend: str | None,
-        nsec_file: str | None,
     ) -> dict[str, Any]:
         """Ingest a document: compute the MAC chain, store the blob, register
         the node (or version an existing node)."""
         with manifest_lock(_manifest_path(self.root)):
             repo = self._load_repo()
+            seq, prev_head = self._next_head(repo)
+            ts = _now_iso()
             parent_mac = repo.root_mac
             parent_path = ""
             if folder:
@@ -221,6 +551,19 @@ class DocumentService:
             if existing is not None and existing.get("contentHash") == ch:
                 return {"unchanged": True, "urn": urn}
             previous = existing["mac"] if existing is not None else None
+            # Tree-position stability: every version of a URN must share one
+            # parentMac. When versioning, the tree position is owned by the
+            # existing document, not by the CLI --folder argument, so the
+            # parent is derived from the existing node and a --folder naming a
+            # different parent is rejected (a move is a separate operation).
+            if existing is not None:
+                if parent_mac != existing["parentMac"]:
+                    raise DocumentError(
+                        f"denied: cannot move {urn} via add; --folder names a "
+                        "different parent than the existing version (move is a "
+                        "separate operation)"
+                    )
+                parent_mac = existing["parentMac"]
             # Version identity binds the predecessor (issue #44): the first
             # version chains off the tree parent; later versions chain off the
             # previous version, so the history is cryptographically chained and
@@ -252,9 +595,11 @@ class DocumentService:
             effective_owners = (
                 list(existing.get("owners", []) or []) if existing else list(owners)
             )
-            if not can_write(org, actor_id, effective_category, effective_owners):
+            if not can_write(
+                self.org, self.actor_id, effective_category, effective_owners
+            ):
                 raise DocumentError(
-                    f"denied: {actor_id} cannot write "
+                    f"denied: {self.actor_id} cannot write "
                     f"{normalize_category(effective_category)} "
                     f"{'(owner required)' if effective_owners else ''}"
                 )
@@ -286,34 +631,40 @@ class DocumentService:
                 "meta": {"title": slug},
                 "relations": {},
                 "previous": previous,
-                "actor": actor_id,
+                "actor": self.actor_id,
                 "action": "add" if previous is None else "version",
+                "seq": seq,
+                "prevHead": prev_head,
+                "cryptoVersion": CRYPTO_VERSION,
+                "policyHash": self.policy_hash,
+                "ts": ts,
             }
             node.update(
-                _sign_fields(
-                    _signing_key(nsec_file),
+                self._sign_fields(
                     mac=mac,
-                    actor=actor_id,
                     action="add" if previous is None else "version",
                     category=effective_category,
                     owners=effective_owners,
                     locations=locations,
                     urn=urn,
+                    seq=seq,
+                    prev_head=prev_head,
+                    ts=ts,
                 )
             )
             repo.add_node(node)
-            save(_manifest_path(self.root), repo.data)
+            self._commit_transaction(
+                repo,
+                seq=seq,
+                action="add" if previous is None else "version",
+                urn=urn,
+                mac=mac,
+                ch=ch,
+                sig=node.get("sig"),
+                sig_pubkey=node.get("sigPubkey"),
+                head_mac=mac,
+            )
 
-        audit_append(
-            self.root,
-            actor_id,
-            "add" if previous is None else "version",
-            urn,
-            mac,
-            ch,
-            node.get("sig"),
-            node.get("sigPubkey"),
-        )
         return {
             "verb": "added" if previous is None else "versioned",
             "logical": logical,
@@ -321,71 +672,61 @@ class DocumentService:
             "mac": mac,
         }
 
-    def set_ref(
-        self,
-        org: dict[str, Any],
-        actor_id: str,
-        *,
-        name: str,
-        ref: str,
-        nsec_file: str | None,
-    ) -> dict[str, Any]:
+    def set_ref(self, *, name: str, ref: str) -> dict[str, Any]:
         """Point a mutable ref (e.g. `latest`) at a version MAC."""
         with manifest_lock(_manifest_path(self.root)):
             repo = self._load_repo()
+            seq, prev_head = self._next_head(repo)
+            ts = _now_iso()
             node = repo.resolve_node(ref)
             if node is None:
                 raise DocumentError(f"not found: {ref}")
             if not can_write(
-                org, actor_id, node.get("category", 0), node.get("owners")
+                self.org, self.actor_id, node.get("category", 0), node.get("owners")
             ):
                 raise DocumentError(
-                    f"denied: {actor_id} cannot write "
+                    f"denied: {self.actor_id} cannot write "
                     f"{normalize_category(node.get('category', 0))} ({node['urn']})"
                 )
-            sig_fields = _sign_fields(
-                _signing_key(nsec_file),
+            sig_fields = self._sign_fields(
                 mac=node["mac"],
-                actor=actor_id,
                 action="tag",
                 category=node.get("category", ""),
                 owners=node.get("owners"),
                 locations=node.get("locations"),
                 urn=node["urn"],
                 ref=name,
+                seq=seq,
+                prev_head=prev_head,
+                ts=ts,
             )
             record = {
                 "mac": node["mac"],
-                "actor": actor_id,
+                "actor": self.actor_id,
                 "action": "tag",
+                "seq": seq,
+                "prevHead": prev_head,
+                "cryptoVersion": CRYPTO_VERSION,
+                "policyHash": self.policy_hash,
+                "ts": ts,
             }
             if sig_fields:
                 record.update(sig_fields)
             repo.set_ref(name, record)
-            save(_manifest_path(self.root), repo.data)
+            self._commit_transaction(
+                repo,
+                seq=seq,
+                action="tag",
+                urn=node["urn"],
+                mac=node["mac"],
+                ch=node.get("contentHash"),
+                sig=record.get("sig"),
+                sig_pubkey=record.get("sigPubkey"),
+            )
 
-        audit_append(
-            self.root,
-            actor_id,
-            "tag",
-            node["urn"],
-            node["mac"],
-            node.get("contentHash"),
-            record.get("sig"),
-            record.get("sigPubkey"),
-        )
         return {"name": name, "mac": node["mac"], "urn": node["urn"]}
 
-    def rollback(
-        self,
-        org: dict[str, Any],
-        actor_id: str,
-        *,
-        urn: str,
-        to_mac: str,
-        backend: str | None,
-        nsec_file: str | None,
-    ) -> dict[str, Any]:
+    def rollback(self, *, urn: str, to_mac: str, backend: str | None) -> dict[str, Any]:
         """Restore an older version's content as a new, current version.
 
         Creates a new version whose content equals the target version's
@@ -396,6 +737,8 @@ class DocumentService:
         """
         with manifest_lock(_manifest_path(self.root)):
             repo = self._load_repo()
+            seq, prev_head = self._next_head(repo)
+            ts = _now_iso()
             target = repo.node_by_mac(to_mac)
             if target is None:
                 raise DocumentError(f"no version with MAC: {to_mac}")
@@ -418,9 +761,9 @@ class DocumentService:
                 )
 
             category = current.get("category", 0)
-            if not can_write(org, actor_id, category, current.get("owners")):
+            if not can_write(self.org, self.actor_id, category, current.get("owners")):
                 raise DocumentError(
-                    f"denied: {actor_id} cannot write "
+                    f"denied: {self.actor_id} cannot write "
                     f"{normalize_category(category)} ({current['urn']})"
                 )
 
@@ -457,32 +800,104 @@ class DocumentService:
                 "meta": dict(current.get("meta", {})),
                 "relations": dict(current.get("relations", {})),
                 "previous": current["mac"],
-                "actor": actor_id,
+                "actor": self.actor_id,
                 "action": "rollback",
+                "seq": seq,
+                "prevHead": prev_head,
+                "cryptoVersion": CRYPTO_VERSION,
+                "policyHash": self.policy_hash,
+                "ts": ts,
             }
             node.update(
-                _sign_fields(
-                    _signing_key(nsec_file),
+                self._sign_fields(
                     mac=mac,
-                    actor=actor_id,
                     action="rollback",
                     category=category,
                     owners=effective_owners,
                     locations=new_locations,
                     urn=current["urn"],
+                    seq=seq,
+                    prev_head=prev_head,
+                    ts=ts,
                 )
             )
             repo.add_node(node)
-            save(_manifest_path(self.root), repo.data)
+            self._commit_transaction(
+                repo,
+                seq=seq,
+                action="rollback",
+                urn=current["urn"],
+                mac=mac,
+                ch=ch,
+                sig=node.get("sig"),
+                sig_pubkey=node.get("sigPubkey"),
+                head_mac=mac,
+            )
 
-        audit_append(
-            self.root,
-            actor_id,
-            "rollback",
-            current["urn"],
-            mac,
-            ch,
-            node.get("sig"),
-            node.get("sigPubkey"),
-        )
         return {"urn": current["urn"], "mac": mac}
+
+    def set_require_signatures(self, mode: bool) -> dict[str, Any]:
+        """Set the namespace signing profile as an authenticated transition.
+
+        A profile change is security-sensitive state, never a bare header
+        edit. It requires the actor's signing key in *both* directions (an
+        unauthenticated ``on -> off`` downgrade is refused fail-closed), is
+        signed over a dedicated profile envelope, appended to the audit log,
+        and advances the mutation head (``headSeq`` / ``auditSeq`` /
+        ``auditHead``) so the change is auditable and head-advancing. The
+        signed transition is recorded in the manifest header
+        (``profileTransition``) so ``verify`` can prove the setting was
+        authentically changed.
+
+        Authentication is not authorization: only the namespace administrator
+        — an actor holding the org's root role (top of the reporting
+        hierarchy) — may change the signing profile. A valid but
+        unauthorized actor's signed downgrade is refused fail-closed.
+        """
+        self._require_namespace_admin()
+        with manifest_lock(_manifest_path(self.root)):
+            repo = self._load_repo()
+            header = repo.data["manifest"]
+            if bool(header.get("requireSignatures")) == mode:
+                return {"mode": mode, "unchanged": True}
+            if not self.nsec:
+                raise DocumentError(
+                    "denied: changing the signing profile requires an actor "
+                    "signing key (--nsec-file or PHANTOMDOCS_NSEC); an "
+                    "unauthenticated profile change is refused fail-closed"
+                )
+            seq, prev_head = self._next_head(repo)
+            ts = _now_iso()
+            envelope = profile_envelope(
+                mode=mode,
+                actor=self.actor_id,
+                seq=seq,
+                prev_head=prev_head,
+                ts=ts,
+                policy_hash=self.policy_hash,
+            )
+            sig = sign_profile(self.nsec, envelope)
+            sig_pubkey = pubkey_from_nsec(self.nsec)
+            header["requireSignatures"] = mode
+            header["profileTransition"] = {
+                "actor": self.actor_id,
+                "mode": mode,
+                "seq": seq,
+                "prevHead": prev_head,
+                "ts": ts,
+                "policyHash": self.policy_hash,
+                "cryptoVersion": CRYPTO_VERSION,
+                "sig": sig,
+                "sigPubkey": sig_pubkey,
+            }
+            self._commit_transaction(
+                repo,
+                seq=seq,
+                action="profile",
+                urn=f"urn:{repo.org}:namespace:{repo.namespace}",
+                mac=repo.root_mac,
+                ch=None,
+                sig=sig,
+                sig_pubkey=sig_pubkey,
+            )
+        return {"mode": mode, "seq": seq}

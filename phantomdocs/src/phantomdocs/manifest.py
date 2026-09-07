@@ -24,7 +24,9 @@ from typing import Any
 
 import yaml
 
+from .fsutil import fsync_dir
 from .identity import is_valid_hex64
+from .signing import CRYPTO_VERSION
 
 MANIFEST_VERSION = 1
 MANIFEST_FILENAME = "manifest.yaml"
@@ -43,16 +45,42 @@ class ManifestError(ValueError):
     """Raised when a manifest fails validation."""
 
 
-def empty_manifest(org: str, namespace: str, root_mac: str) -> dict[str, Any]:
-    """A fresh, valid single-tenant manifest."""
+def empty_manifest(
+    org: str, namespace: str, root_mac: str, require_signatures: bool = False
+) -> dict[str, Any]:
+    """A fresh, valid single-tenant manifest.
+
+    The header carries a monotonic mutation head (``headSeq``, the number of
+    committed mutations) and a structural node head (``headMac``, the MAC of
+    the last committed node), plus an audit-log head (``auditSeq`` /
+    ``auditHead``) so that `pd verify` can detect a mutation whose manifest
+    commit and audit entry diverged (crash between the two) and an audit log
+    that has been truncated or rolled back relative to the manifest (issues
+    #71/#74).
+
+    ``headSeq`` and ``auditHead`` advance on *every* mutation (including
+    ``tag``); ``headMac`` advances only on node-producing mutations
+    (``mkdir``/``add``/``version``/``rollback``), because a tag creates no
+    node. The canonical identity of the last mutation is ``auditHead`` (the
+    hash of its audit entry).
+    """
     return {
         "manifest": {
             "version": MANIFEST_VERSION,
+            "cryptoVersion": CRYPTO_VERSION,
             "org": org,
             "namespace": namespace,
             "tenant": "single",
             "rootMac": root_mac,
             "signedRootMac": None,
+            "sealPubkey": None,
+            "sealedHeadSeq": None,
+            "requireSignatures": require_signatures,
+            "profileTransition": None,
+            "headSeq": 0,
+            "headMac": root_mac,
+            "auditSeq": 0,
+            "auditHead": None,
         },
         "refs": {},
         "nodes": [],
@@ -85,6 +113,7 @@ def save(path: str, data: dict[str, Any]) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        fsync_dir(directory)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -101,6 +130,11 @@ def manifest_lock(path: str) -> Iterator[None]:
     back to an ``msvcrt`` range lock. The lock is advisory but serializes the
     mutating commands, so a concurrent ``add``/``tag``/``mkdir`` cannot lose
     the other's update.
+
+    The lock is **host-local**: it serializes concurrent processes on the same
+    host, not across hosts. PhantomDocs v1 supports a single authoritative
+    writer host per namespace (Model A); two hosts writing the same namespace
+    would fork the head (see SPEC §6.3).
     """
     lock_path = os.path.join(
         os.path.dirname(os.path.abspath(path)) or ".", LOCK_FILENAME
@@ -148,6 +182,60 @@ def validate(data: dict[str, Any]) -> list[str]:
         errors.append("multi-tenancy is not supported in this version")
     if not m.get("org"):
         errors.append("manifest.org is required")
+    if m.get("cryptoVersion") is not None and not isinstance(
+        m.get("cryptoVersion"), int
+    ):
+        errors.append("manifest.cryptoVersion must be an integer")
+    # Head/anchor fields are optional (older manifests lack them) but, when
+    # present, must have the right shape so verify can trust them.
+    if m.get("headSeq") is not None and not isinstance(m.get("headSeq"), int):
+        errors.append("manifest.headSeq must be an integer")
+    if m.get("auditSeq") is not None and not isinstance(m.get("auditSeq"), int):
+        errors.append("manifest.auditSeq must be an integer")
+    if m.get("sealedHeadSeq") is not None and not isinstance(
+        m.get("sealedHeadSeq"), int
+    ):
+        errors.append("manifest.sealedHeadSeq must be an integer")
+    if m.get("requireSignatures") is not None and not isinstance(
+        m.get("requireSignatures"), bool
+    ):
+        errors.append("manifest.requireSignatures must be a boolean")
+    profile_transition = m.get("profileTransition")
+    if profile_transition is not None:
+        if not isinstance(profile_transition, dict):
+            errors.append("manifest.profileTransition must be a mapping")
+        else:
+            if profile_transition.get("seq") is not None and not isinstance(
+                profile_transition.get("seq"), int
+            ):
+                errors.append("manifest.profileTransition.seq must be an integer")
+            for field in ("actor", "ts", "policyHash"):
+                value = profile_transition.get(field)
+                if value is not None and not isinstance(value, str):
+                    errors.append(
+                        f"manifest.profileTransition.{field} must be a string"
+                    )
+            sig = profile_transition.get("sig")
+            if sig is not None and (
+                not isinstance(sig, str)
+                or len(sig) != 128
+                or any(c not in "0123456789abcdef" for c in sig)
+            ):
+                errors.append("manifest.profileTransition.sig must be 128-hex")
+            for field in ("sigPubkey", "prevHead"):
+                value = profile_transition.get(field)
+                if value is not None and (
+                    not isinstance(value, str) or not is_valid_hex64(value)
+                ):
+                    errors.append(
+                        f"manifest.profileTransition.{field} must be a 64-hex string"
+                    )
+    for field in ("headMac", "sealPubkey"):
+        value = m.get(field)
+        if value is not None and (
+            not isinstance(value, str) or not is_valid_hex64(value)
+        ):
+            errors.append(f"manifest.{field} must be a 64-hex string")
     root_mac = m.get("rootMac")
     if not root_mac:
         errors.append("manifest.rootMac is required")
@@ -337,7 +425,10 @@ def structural_issues(data: dict[str, Any]) -> list[str]:
     - version lineage: for each URN, versions form a strictly linear chain —
       the first version has no ``previous`` and every later version's
       ``previous`` is the immediately preceding version's MAC (no cross-URN
-      links, no skips, no cycles).
+      links, no skips, no cycles);
+    - tree-position stability: every version of a URN must share the same
+      ``parentMac`` — a location change is a separate, explicit move, never a
+      silent side effect of versioning.
 
     Returns one human-readable string per problem.
     """
@@ -371,6 +462,15 @@ def structural_issues(data: dict[str, Any]) -> list[str]:
         if node.get("kind") == "doc":
             by_urn.setdefault(node["urn"], []).append(node)
     for urn, versions in by_urn.items():
+        # Tree-position stability: all versions of a URN must share one
+        # parentMac. A change of location is a separate, explicit move
+        # operation, never a silent side effect of versioning.
+        parent_macs = {v.get("parentMac") for v in versions}
+        if len(parent_macs) > 1:
+            issues.append(
+                f"{urn}: versions disagree on parentMac — all versions must "
+                "share one tree position"
+            )
         for index, version in enumerate(versions):
             previous = version.get("previous")
             if index == 0:
@@ -395,6 +495,77 @@ def ref_target_mac(value: Any) -> str | None:
     if isinstance(value, dict):
         return value.get("mac")
     return None
+
+
+def mutation_sequence_issues(data: dict[str, Any]) -> list[str]:
+    """Mutation-sequence integrity problems (issue #73), or empty.
+
+    Each mutation binds a monotonic ``seq`` and a ``prevHead`` (the last
+    committed node's MAC it builds on) into its signed envelope. verify
+    checks:
+
+    - node ``seq`` is strictly increasing (no replay, duplicate or reorder);
+    - node ``prevHead`` equals the previous node's MAC (or ``rootMac`` for the
+      first), so a node re-inserted after a rollback fails;
+    - ``manifest.headMac`` equals the last node's MAC (the structural node
+      head), so deleting the latest node is detected;
+    - ``manifest.headSeq`` is not lower than the last node's ``seq``.
+
+    Returns one human-readable string per problem.
+    """
+    issues: list[str] = []
+    root_mac = data["manifest"]["rootMac"]
+    nodes = data.get("nodes", [])
+
+    # 1. Node seq must be strictly increasing.
+    last_seq = 0
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        seq = node.get("seq")
+        if seq is not None:
+            if seq <= last_seq:
+                issues.append(f"nodes[{index}]: seq {seq!r} is not strictly increasing")
+            last_seq = max(last_seq, seq)
+
+    # 2. prevHead chaining over the ordered node list.
+    prev_mac = root_mac
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        prev_head = node.get("prevHead")
+        if prev_head is None:
+            # A node without prevHead (legacy) ends the chainable prefix;
+            # keep walking but only report when the field is present.
+            prev_mac = node.get("mac", prev_mac)
+            continue
+        if prev_head != prev_mac:
+            issues.append(
+                f"nodes[{index}]: prevHead {prev_head!r} does not match "
+                f"previous head {prev_mac!r}"
+            )
+        prev_mac = node.get("mac", prev_mac)
+
+    # 3. The structural node head must agree with the last node (so deleting
+    # the latest node is detected even when the seal/audit anchors are intact).
+    header = data["manifest"]
+    head_mac = header.get("headMac")
+    if head_mac and nodes:
+        last = nodes[-1]
+        last_mac = last.get("mac") if isinstance(last, dict) else None
+        if last_mac and last_mac != head_mac:
+            issues.append(
+                f"manifest.headMac {head_mac!r} does not match last node {last_mac!r}"
+            )
+
+    # 4. headSeq must not lag behind the node history.
+    head_seq = header.get("headSeq")
+    if head_seq is not None and last_seq and head_seq < last_seq:
+        issues.append(
+            f"manifest.headSeq {head_seq!r} is lower than the last node seq "
+            f"{last_seq!r}"
+        )
+    return issues
 
 
 def resolve_node(data: dict[str, Any], ref: str) -> dict[str, Any] | None:

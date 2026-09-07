@@ -5,21 +5,29 @@ PhantomDocs does NOT define its own ACL: it consumes PhantomOrg's
 exception fields, and checks whether an actor's resolved access covers a
 node's category. Fail-closed: no rule -> denied.
 
-Categories are hierarchical (issue #45): the hierarchy is declared in
+Categories are hierarchical: the hierarchy is declared in
 ``policies.security_categories``, where each category carries an optional
-``scope`` and ``owner``. A category grants its declared descendants (the
-longest declared ``-``-prefix parent links declared categories); the prefix
-is no longer a blind grant on arbitrary strings. An undeclared category is
-denied (fail-closed).
+``scope``, ``owner`` and ``parent``. When a category declares ``parent``,
+that field is the authority for the hierarchy (issue #100) and the
+``-``-prefix in an id is only canonical *naming*; when no category declares
+``parent``, the hierarchy falls back to the longest declared ``-``-prefix
+(issue #45). In both modes the link only ever connects *declared*
+categories, never a blind string match; an undeclared category is denied
+(fail-closed).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import time
 import warnings
 from typing import Any
 
 import yaml
+
+from .signing import npub_to_pubkey_hex
 
 # The PhantomOrg org.yaml schema version PhantomDocs resolves access from.
 # PhantomOrg's own model declares ``version: 1`` (top-level int) and validates
@@ -56,6 +64,90 @@ def load_org(org_yaml_path: str) -> dict[str, Any]:
         org = yaml.safe_load(f) or {}
     validate_org_schema(org)
     return org
+
+
+def policy_hash(org: dict[str, Any]) -> str:
+    """Canonical digest of the org model that authorizes a mutation (audit #7).
+
+    Deterministic JSON (sorted keys, compact separators, ASCII-escaped) of the
+    parsed org model, SHA-256 hashed. Two org models that differ in any
+    authorization-relevant way (roles, actors, keys, categories, exceptions)
+    produce different digests, so a node records *which* policy version
+    authorized it — a mutation carries ``policyHash = Y`` and an auditor can
+    later prove provenance without trusting the current org model.
+    """
+    canonical = json.dumps(
+        org, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def actor_key_records(org: dict[str, Any], actor_id: str) -> list[dict[str, Any]]:
+    """The actor's declared signing keys as lifecycle records (issue #76).
+
+    Each record: ``{npub, valid_from, valid_until, revoked_at}``, where the
+    timestamps are ISO-8601 UTC strings (or None). The actor's ``npub`` is the
+    active key; optional ``keys`` entries add rotation windows and revocations
+    (key A valid T0–T1, key B valid from T1, key X revoked at T).
+    """
+    actor = next((a for a in org.get("actors", []) if a.get("id") == actor_id), None)
+    if not actor:
+        return []
+    records: list[dict[str, Any]] = []
+    key_map: dict[str, dict[str, Any]] = {}
+    for k in actor.get("keys") or []:
+        if isinstance(k, dict) and k.get("npub"):
+            key_map[k["npub"]] = {
+                "npub": k["npub"],
+                "valid_from": k.get("valid_from"),
+                "valid_until": k.get("valid_until"),
+                "revoked_at": k.get("revoked_at"),
+            }
+    npub = actor.get("npub")
+    if npub and isinstance(npub, str) and npub.strip():
+        if npub in key_map:
+            records.append(key_map.pop(npub))
+        else:
+            records.append(
+                {
+                    "npub": npub,
+                    "valid_from": None,
+                    "valid_until": None,
+                    "revoked_at": None,
+                }
+            )
+    # Historical keys (rotation/revocation) that are not the active npub.
+    records.extend(key_map.values())
+    return records
+
+
+def key_valid_at(org: dict[str, Any], actor_id: str, pubkey_hex: str, ts: str) -> bool:
+    """True iff ``pubkey_hex`` is a declared key for ``actor_id`` that was
+    valid at ``ts`` — not yet revoked, within its ``valid_from``/``valid_until``
+    window. ``ts`` is an ISO-8601 UTC string (lexicographic comparison)."""
+    for rec in actor_key_records(org, actor_id):
+        try:
+            if npub_to_pubkey_hex(rec["npub"]) != pubkey_hex:
+                continue
+        except ValueError:
+            continue
+        revoked_at = rec.get("revoked_at")
+        if revoked_at and ts >= revoked_at:
+            return False
+        valid_from = rec.get("valid_from")
+        if valid_from and ts < valid_from:
+            continue
+        valid_until = rec.get("valid_until")
+        if valid_until and ts >= valid_until:
+            continue
+        return True
+    return False
+
+
+def key_valid_now(org: dict[str, Any], actor_id: str, pubkey_hex: str) -> bool:
+    """True iff the key is a currently-valid (non-revoked) key for the actor."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return key_valid_at(org, actor_id, pubkey_hex, now)
 
 
 def normalize_category(category: int | str) -> str:
@@ -134,6 +226,40 @@ def _actor_role_id(org: dict[str, Any], actor_id: str) -> str | None:
     return None
 
 
+def root_role_ids(org: dict[str, Any]) -> list[str]:
+    """Role ids at the top of the reporting hierarchy (the org's root).
+
+    A role is a root role only when ``reports_to`` is *explicitly present and
+    null* — the top of the hierarchy (e.g. ``ceo``). A missing ``reports_to``
+    field or a malformed value (e.g. an empty string ``""``) is NOT a root
+    role and is treated fail-closed: a namespace whose hierarchy is not
+    explicitly declared authorizes nobody.
+    """
+    roots: list[str] = []
+    for r in org.get("roles", []):
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        if "reports_to" in r and r["reports_to"] is None:
+            roots.append(r["id"])
+    return roots
+
+
+def can_administer_namespace(org: dict[str, Any], actor_id: str) -> bool:
+    """True iff ``actor_id`` is authorized to administer the namespace profile.
+
+    Administration (changing the namespace-wide signing profile) is restricted
+    to the root role(s) — the top of the reporting hierarchy. Authorization is
+    distinct from authentication: a declared actor holding a valid key is
+    *authenticated*, but only a root-role actor is *authorized* to change the
+    signing profile (audit #1). Fail-closed: an unknown actor, an actor with
+    no role, or a non-root role is denied.
+    """
+    role_id = _actor_role_id(org, actor_id)
+    if not role_id:
+        return False
+    return role_id in root_role_ids(org)
+
+
 def _security_categories(org: dict[str, Any]) -> dict[str, Any]:
     """The declared ``policies.security_categories`` map (id -> spec)."""
     return org.get("policies", {}).get("security_categories", {}) or {}
@@ -142,13 +268,29 @@ def _security_categories(org: dict[str, Any]) -> dict[str, Any]:
 def _category_parents(org: dict[str, Any]) -> dict[str, str | None]:
     """Map each declared category id to its declared parent id.
 
-    The parent is the longest declared proper ``-``-prefix, so the prefix only
-    links *declared* categories (issue #45): the hierarchy is an explicit
-    relation over ``security_categories`` (which carries ``scope``/``owner``),
-    not a blind string match. An undeclared category has no parent.
+    Semantic mode (issue #100): when any category declares an explicit
+    ``parent`` field, that field is the authority for the hierarchy — the
+    ``-``-prefix in an id is then only canonical *naming*, not the
+    authorization algorithm. A ``parent`` that does not reference a declared
+    category is treated as a broken link (no parent) so ``can_read`` denies
+    fail-closed rather than silently mis-resolving.
+
+    Legacy mode (issue #45): when no category declares ``parent``, the parent
+    is the longest declared proper ``-``-prefix, which links only *declared*
+    categories — never a blind string match. An undeclared category has no
+    parent.
     """
-    declared = set(_security_categories(org))
-    tree: dict[str, str | None] = {}
+    cats = _security_categories(org)
+    declared = set(cats)
+    if any("parent" in spec for spec in cats.values()):
+        tree: dict[str, str | None] = {}
+        for cid, spec in cats.items():
+            parent = spec.get("parent")
+            tree[cid] = (
+                parent if isinstance(parent, str) and parent in declared else None
+            )
+        return tree
+    tree = {}
     for cid in declared:
         candidates = [d for d in declared if d != cid and cid.startswith(d + "-")]
         tree[cid] = max(candidates, key=len) if candidates else None

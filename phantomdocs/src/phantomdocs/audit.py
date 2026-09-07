@@ -15,8 +15,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 from typing import Any
+
+from .fsutil import fsync_dir
 
 AUDIT_FILENAME = "audit.log"
 
@@ -34,7 +37,14 @@ def append(
     content_hash: str | None,
     sig: str | None = None,
     sig_pubkey: str | None = None,
-) -> None:
+    seq: int | None = None,
+) -> str:
+    """Append one entry and return the SHA-256 of the raw line written.
+
+    ``seq`` is the monotonic mutation sequence the entry belongs to; it lets
+    ``verify`` detect a truncated or re-ordered tail even when the ``prev``
+    chain itself survives intact (issue #71).
+    """
     path = os.path.join(root, AUDIT_FILENAME)
     prev: str | None = None
     if os.path.exists(path):
@@ -51,12 +61,36 @@ def append(
         "hash": content_hash,
         "prev": prev,
     }
+    if seq is not None:
+        entry["seq"] = seq
     if sig is not None:
         entry["sig"] = sig
     if sig_pubkey is not None:
         entry["sigPubkey"] = sig_pubkey
+    line = json.dumps(entry, sort_keys=True) + "\n"
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, sort_keys=True) + "\n")
+        f.write(line)
+        f.flush()
+        os.fsync(f.fileno())
+    return _sha256(line.encode("utf-8"))
+
+
+def head(root: str) -> tuple[int, str | None]:
+    """Return ``(entry_count, last_line_hash)`` for the audit log.
+
+    ``last_line_hash`` is the SHA-256 of the last raw line (including its
+    newline), or None when the log is empty/absent. This is the *head anchor*
+    the manifest stores so `verify` can detect truncation and tail rollback.
+    """
+    path = os.path.join(root, AUDIT_FILENAME)
+    if not os.path.exists(path):
+        return 0, None
+    with open(path, "rb") as f:
+        raw = f.read().splitlines(keepends=True)
+    count = sum(1 for line in raw if line.strip())
+    if not raw:
+        return 0, None
+    return count, _sha256(raw[-1])
 
 
 def read(root: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -102,3 +136,166 @@ def verify_chain(root: str) -> list[str]:
             )
         previous_hash = _sha256(raw)
     return problems
+
+
+def entries(root: str) -> list[dict[str, Any]]:
+    """All audit entries, oldest first (missing/empty log -> [])."""
+    path = os.path.join(root, AUDIT_FILENAME)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def sequence_issues(root: str) -> list[str]:
+    """Mutation-sequence contiguity over the audit log (issue #73).
+
+    The audit log is the authoritative record of *every* mutation (add, mkdir,
+    tag, rollback), each with a monotonic ``seq`` (``init`` is ``seq=0``). The
+    invariant is "exactly one valid successor relation": entries carrying a
+    ``seq`` must be exactly contiguous — the first such entry anchors the
+    sequence and every later one must be exactly the previous + 1. Legacy
+    entries without ``seq`` are skipped without resetting the counter.
+    """
+    problems: list[str] = []
+    expected: int | None = None
+    for index, entry in enumerate(entries(root), 1):
+        seq = entry.get("seq")
+        if seq is None:
+            continue
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            problems.append(f"audit line {index}: seq {seq!r} is not an integer")
+            continue
+        if expected is None:
+            expected = seq
+        elif seq != expected + 1:
+            problems.append(
+                f"audit line {index}: seq {seq!r} is not contiguous "
+                f"(expected {expected + 1!r})"
+            )
+        expected = seq
+    return problems
+
+
+def max_seq(root: str) -> int | None:
+    """The highest mutation ``seq`` in the audit log, or None if no entry has one.
+
+    This is the authoritative global mutation counter; ``manifest.headSeq`` must
+    agree with it (a node whose ``seq``/``headSeq`` drifted from the audit log
+    is a divergence the composed-tree check catches).
+    """
+    best: int | None = None
+    for entry in entries(root):
+        seq = entry.get("seq")
+        if (
+            isinstance(seq, int)
+            and not isinstance(seq, bool)
+            and (best is None or seq > best)
+        ):
+            best = seq
+    return best
+
+
+def raw_lines(root: str) -> list[bytes]:
+    """The non-blank raw audit-log lines (bytes, newlines included), oldest first."""
+    path = os.path.join(root, AUDIT_FILENAME)
+    if not os.path.exists(path):
+        return []
+    with open(path, "rb") as f:
+        return [line for line in f.read().splitlines(keepends=True) if line.strip()]
+
+
+def truncate(root: str, keep: int) -> None:
+    """Rewrite the audit log keeping only the first ``keep`` lines (recovery).
+
+    This is the *recovery* operation for the audit-first transaction (issue #74):
+    it discards orphaned audit entries that were appended after the manifest's
+    last commit. The caller MUST have already verified that the kept prefix is
+    intact and matches the manifest's recorded head; ``truncate`` itself does
+    not re-verify. Raw line bytes are preserved so the kept prefix's hash chain
+    stays valid.
+    """
+    path = os.path.join(root, AUDIT_FILENAME)
+    lines = raw_lines(root)
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".audit-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.writelines(lines[:keep])
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        fsync_dir(directory)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def reconcile(root: str, expected_count: int, expected_head: str | None) -> int:
+    """Reconcile the audit log with the manifest after a crash (issue #74).
+
+    The only *recoverable* divergence is an orphaned audit tail — entries
+    appended after the manifest's last commit (a crash between the audit
+    append and the manifest write). Those are discarded so the next mutation
+    starts from a clean, strictly-monotonic head.
+
+    Every other divergence (a broken hash chain, the log *behind* the
+    manifest, or an orphaned tail that does not chain cleanly off the recorded
+    head) is evidence of tampering or manual edits, not a crash; it raises
+    ``ValueError`` and the log is left untouched (fail-closed).
+
+    Returns the number of orphaned entries discarded (0 when already
+    consistent).
+    """
+    problems = verify_chain(root)
+    if problems:
+        raise ValueError(
+            "audit hash chain is broken (tampering, not a crash): "
+            + "; ".join(problems)
+        )
+
+    actual_count, _actual_head = head(root)
+    if actual_count == expected_count:
+        lines = raw_lines(root)
+        if expected_head is not None and (
+            not lines or _sha256(lines[-1]) != expected_head
+        ):
+            raise ValueError(
+                "audit count matches but the head hash does not (tampering)"
+            )
+        return 0
+
+    if actual_count < expected_count:
+        raise ValueError(
+            f"audit log is missing {expected_count - actual_count} entries "
+            "relative to the manifest — evidence of tampering or manual edits, "
+            "not a crash"
+        )
+
+    # Audit ahead of manifest: verify the kept prefix chains off the recorded
+    # head, then discard the orphaned tail.
+    lines = raw_lines(root)
+    if (
+        expected_count > 0
+        and expected_head is not None
+        and _sha256(lines[expected_count - 1]) != expected_head
+    ):
+        raise ValueError(
+            "orphaned audit tail does not chain cleanly off the manifest's "
+            "recorded head; refusing to recover (tampering?)"
+        )
+    discarded = actual_count - expected_count
+    truncate(root, expected_count)
+    return discarded

@@ -1,10 +1,12 @@
 import textwrap
 
 from phantomdocs.access import (
+    can_administer_namespace,
     can_read,
     can_write,
     load_org,
     resolved_categories,
+    root_role_ids,
 )
 
 ORG_YAML = textwrap.dedent("""\
@@ -114,6 +116,47 @@ def test_can_read_leaf_grants_own_subcategory(tmp_path):
     org = _org(tmp_path)
     assert can_read(org, "alma", "category-4-almaponia-finance") is True
     assert can_read(org, "alma", "category-4-proyecto2") is False
+
+
+def test_can_read_semantic_parent_overrides_prefix(tmp_path):
+    """Issue #100: an explicit `parent` field is the authority for the
+    hierarchy; the ``-``-prefix in an id is only canonical naming. Here
+    ``category-4-almaponia`` declares ``parent: category-3``, so a category-3
+    holder can read it while a category-4 (prefix) holder cannot."""
+    yaml = textwrap.dedent("""\
+        version: 1
+        policies:
+          access_levels:
+            level-2: { label: Operative, categories: [1, 2] }
+          security_categories:
+            category-1: { label: Public }
+            category-2: { label: Confidential }
+            category-3: { label: "Sensitive financial" }
+            category-4: { label: "Sensitive project", scope: project }
+            category-4-almaponia: { label: ALMAPONIA, scope: project, owner: almaponia, parent: category-3 }
+        roles:
+          - id: cfo
+            access_level: level-2
+            security_exceptions: [category-3]
+          - id: overseer
+            access_level: level-2
+            security_exceptions: [category-4]
+        actors:
+          - id: roberto
+            role: cfo
+            actor_exceptions: []
+          - id: pepa
+            role: overseer
+            actor_exceptions: []
+    """)
+    p = tmp_path / "org.yaml"
+    p.write_text(yaml, encoding="utf-8")
+    org = load_org(str(p))
+    # roberto holds category-3, the explicit parent of the leaf.
+    assert can_read(org, "roberto", "category-4-almaponia") is True
+    # pepa holds category-4, which is only a prefix-naming ancestor, not the
+    # declared parent — so the prefix must NOT grant.
+    assert can_read(org, "pepa", "category-4-almaponia") is False
 
 
 def test_can_write_requires_owners(tmp_path):
@@ -234,3 +277,56 @@ def test_malformed_categories_string_fails_closed(tmp_path):
     org = load_org(str(p))
     assert resolved_categories(org, "marco") == []
     assert can_read(org, "marco", 1) is False
+
+
+def test_root_role_requires_explicit_null(tmp_path):
+    """`reports_to` must be explicitly present and null to be a root role.
+
+    A missing `reports_to` field — or a malformed value such as an empty
+    string — must NOT classify a role as the root (audit #1 round 3).
+    Otherwise an org with roles `[{id: ceo}, {id: cfo}]` would make any actor
+    an administrator and recreate the unauthorized signed-downgrade path.
+    """
+    org = _org(tmp_path)
+    # All three roles omit `reports_to` -> nobody is a root role.
+    assert root_role_ids(org) == []
+    assert can_administer_namespace(org, "roberto") is False
+    assert can_administer_namespace(org, "pepa") is False
+    assert can_administer_namespace(org, "unknown") is False
+
+
+def test_root_role_explicit_null_is_admin(tmp_path):
+    """A role with `reports_to: null` is the root and administers the profile."""
+    p = tmp_path / "org.yaml"
+    p.write_text(
+        "version: 1\n"
+        "organization: {id: org1}\n"
+        "roles:\n"
+        "  - {id: ceo, access_level: level-1, reports_to: null}\n"
+        "  - {id: cfo, access_level: level-1, reports_to: ceo}\n"
+        "actors:\n"
+        "  - {id: paco, role: ceo}\n"
+        "  - {id: roberto, role: cfo}\n",
+        encoding="utf-8",
+    )
+    org = load_org(str(p))
+    assert root_role_ids(org) == ["ceo"]
+    assert can_administer_namespace(org, "paco") is True
+    assert can_administer_namespace(org, "roberto") is False
+
+
+def test_root_role_rejects_empty_reports_to(tmp_path):
+    """An empty-string `reports_to` is malformed, not a root role (fail-closed)."""
+    p = tmp_path / "org.yaml"
+    p.write_text(
+        "version: 1\n"
+        "organization: {id: org1}\n"
+        "roles:\n"
+        '  - {id: ceo, access_level: level-1, reports_to: ""}\n'
+        "actors:\n"
+        "  - {id: paco, role: ceo}\n",
+        encoding="utf-8",
+    )
+    org = load_org(str(p))
+    assert root_role_ids(org) == []
+    assert can_administer_namespace(org, "paco") is False

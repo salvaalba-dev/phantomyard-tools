@@ -76,15 +76,22 @@ def test_resolve_backend_gdrive():
 
 
 def test_gdrive_backend_put_returns_file_id():
-    """`put` returns the Drive file id printed by the persona's tooling."""
+    """`put` returns the Drive file id printed by the persona's tooling, and
+    independently re-reads + hash-checks it (audit #8)."""
     b = GdriveBackend()
     h = _content_hash(b"x")
+
+    def fake_run(args, **kwargs):
+        if args[1] == "drive" and args[2] == "download":
+            # Read-back: the tool returns the uploaded bytes on download.
+            with open(args[4], "wb") as f:
+                f.write(b"x")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
+
     with (
         mock.patch.object(GdriveBackend, "_require_tool"),
-        mock.patch(
-            "phantomdocs.storage._run_checked",
-            return_value=mock.Mock(returncode=0, stdout="file-abc\n", stderr=""),
-        ),
+        mock.patch("phantomdocs.storage._run_checked", side_effect=fake_run),
     ):
         assert b.put(h, b"x") == "file-abc"
 
@@ -103,6 +110,80 @@ def test_gdrive_backend_put_fails_closed_without_file_id():
         pytest.raises(StorageError),
     ):
         b.put(h, b"x")
+
+
+def test_gdrive_backend_put_passes_content_hash_flag():
+    """`put` forwards the content hash as the idempotency key (issue #79)."""
+    b = GdriveBackend()
+    h = _content_hash(b"x")
+    upload_calls = []
+
+    def fake_run(args, **kwargs):
+        if args[1] == "drive-upload":
+            upload_calls.append(args)
+        elif args[1] == "drive" and args[2] == "download":
+            with open(args[4], "wb") as f:
+                f.write(b"x")  # read-back
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
+
+    with (
+        mock.patch.object(GdriveBackend, "_require_tool"),
+        mock.patch("phantomdocs.storage._run_checked", side_effect=fake_run),
+    ):
+        b.put(h, b"x")
+    args = upload_calls[0]
+    # The invocation must include --content-hash <hash> as the idempotency key.
+    i = args.index("--content-hash")
+    assert args[i + 1] == h
+    assert "--folder" in args
+    assert "drive-upload" in args
+
+
+def test_gdrive_backend_put_is_idempotent(tmp_path):
+    """Retrying a put with identical content returns the SAME file id — the
+    content-addressed contract (issue #79) that makes a retry after a lost
+    upload response duplicate-free."""
+    import os
+
+    store = tmp_path / "drive-store"
+    store.mkdir()
+    ws = tmp_path / "fake-workspace.py"
+    ws.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, shutil, sys\n"
+        "store = os.environ['FAKE_DRIVE_STORE']\n"
+        "idx = os.path.join(store, '.idx.json')\n"
+        "seen = json.load(open(idx)) if os.path.exists(idx) else {}\n"
+        "if sys.argv[1] == 'drive-upload':\n"
+        "    path = sys.argv[2]\n"
+        "    # honor the idempotency key: --content-hash <hex>\n"
+        "    h = sys.argv[sys.argv.index('--content-hash') + 1]\n"
+        "    if h in seen:\n"
+        "        print(seen[h])  # same content -> same id\n"
+        "    else:\n"
+        "        fid = 'file-' + str(len(seen) + 1)\n"
+        "        shutil.copyfile(path, os.path.join(store, fid))\n"
+        "        seen[h] = fid\n"
+        "        json.dump(seen, open(idx, 'w'))\n"
+        "        print(fid)\n"
+        "elif sys.argv[1] == 'drive' and sys.argv[2] == 'download':\n"
+        "    shutil.copyfile(os.path.join(store, sys.argv[3]), sys.argv[4])\n",
+        encoding="utf-8",
+    )
+    os.chmod(ws, 0o755)
+    env = {"PHANTOMDOCS_WORKSPACE_PY": str(ws), "FAKE_DRIVE_STORE": str(store)}
+
+    with mock.patch.dict(os.environ, env):
+        b = GdriveBackend()
+        h = _content_hash(b"same bytes")
+        first = b.put(h, b"same bytes")
+        second = b.put(h, b"same bytes")
+        assert first == second, "identical content must resolve to the same file id"
+        # A different content must NOT collide with the first.
+        h2 = _content_hash(b"different bytes")
+        third = b.put(h2, b"different bytes")
+        assert third != first
 
 
 def test_resolve_backend_unknown():

@@ -42,6 +42,18 @@ import coincurve
 # with a signature over the same bytes in another protocol.
 _SIGN_DOMAIN = b"phantomdocs-mutation-v1"
 
+# Domain separator for the org's head seal (issue #70/#71): a signature over
+# the namespace root + head commitment, never confused with a mutation sig.
+_SEAL_DOMAIN = b"phantomdocs-seal-v1"
+
+# The authenticated crypto-suite version (crypto agility, audit #5).
+# v1 = BIP-340 Schnorr signatures (secp256k1) + SHA-256. This build can only
+# produce/verify v1; a mutation or manifest declaring another version is
+# refused fail-closed, so a future v2 (new primitives) can verify v1 while v1
+# refuses v2. The version is bound into every signed envelope and the sealed
+# manifest header — it is authenticated state, not implementation convention.
+CRYPTO_VERSION = 1
+
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 
@@ -160,8 +172,13 @@ def mutation_envelope(
     locations: list[dict] | None,
     urn: str,
     ref: str | None = None,
+    seq: int | None = None,
+    prev_head: str | None = None,
+    ts: str | None = None,
+    policy_hash: str | None = None,
+    crypto_version: int | None = CRYPTO_VERSION,
 ) -> bytes:
-    """The canonical bytes signed for a mutation (issue #30 v2).
+    """The canonical bytes signed for a mutation (issue #30 v2, #73).
 
     Deterministic JSON (sorted keys, compact separators, ASCII-escaped) so
     ``verify`` can rebuild the exact message from the stored node fields and
@@ -172,8 +189,18 @@ def mutation_envelope(
 
     ``ref`` is set only for ``tag`` mutations: the mutable ref name is bound
     into the envelope so a ref renamed or repointed after signing no longer
-    verifies (issue #30 v2 / PR #38). It is omitted for node mutations so
-    existing signed nodes verify byte-identically.
+    verifies (issue #30 v2 / PR #38).
+
+    ``seq`` and ``prev_head`` bind the mutation to a specific committed
+    state (issue #73): ``seq`` is the monotonic mutation sequence and
+    ``prev_head`` is the committed head MAC this mutation builds on. A
+    mutation whose signature was produced for an older state (a replay, or a
+    re-insertion after rollback) no longer verifies against the current
+    state, because its ``seq``/``prev_head`` do not match the chain.
+
+    ``ts`` (ISO-8601 UTC) is the mutation timestamp, bound so that key
+    rotation/revocation (issue #76) can be evaluated against the point in
+    time the mutation was authorized, not the point verify happens to run.
     """
     payload = {
         "actor": actor,
@@ -184,8 +211,24 @@ def mutation_envelope(
         "owners": list(owners) if owners else [],
         "urn": urn,
     }
+    # ``crypto_version`` is authenticated state (audit decision 3). ``None``
+    # encodes the *legacy* pre-crypto-agility v1 envelope, which predates the
+    # ``crypto_version`` field; ``verify`` passes ``None`` when a stored node
+    # carries no ``cryptoVersion`` so namespaces signed before the upgrade
+    # remain verifiable. A non-``None`` version binds the suite version into
+    # the signed bytes.
+    if crypto_version is not None:
+        payload["crypto_version"] = crypto_version
     if ref is not None:
         payload["ref"] = ref
+    if seq is not None:
+        payload["seq"] = seq
+    if prev_head is not None:
+        payload["prev_head"] = prev_head
+    if ts is not None:
+        payload["ts"] = ts
+    if policy_hash is not None:
+        payload["policy_hash"] = policy_hash
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
@@ -212,5 +255,133 @@ def verify_mutation(pubkey_hex: str, signature_hex: str, envelope: bytes) -> boo
         pubkey = coincurve.PublicKeyXOnly(bytes.fromhex(pubkey_hex))
         signature = bytes.fromhex(signature_hex)
         return pubkey.verify(signature, mutation_message(envelope))
+    except (ValueError, TypeError):
+        return False
+
+
+def seal_envelope(
+    *,
+    root_mac: str,
+    head_seq: int,
+    head_mac: str,
+    audit_seq: int,
+    audit_head: str | None,
+    require_signatures: bool | None = None,
+    crypto_version: int | None = CRYPTO_VERSION,
+) -> bytes:
+    """The canonical bytes the org signs to seal the namespace head.
+
+    Covers the root MAC **and** the head state (issues #70/#71): ``head_seq``
+    (mutation counter), ``head_mac`` (structural node head), ``audit_seq`` /
+    ``audit_head`` (audit-log anchor). The signing profile
+    (``require_signatures``) is also bound, so a profile downgrade made
+    without the org re-sealing no longer verifies (audit #1). A forged root,
+    a deleted version, a rolled-back head, or a truncated audit log all change
+    the envelope and invalidate the seal — which only the org (holder of the
+    org key) can re-make.
+    """
+    payload = {
+        "audit_head": audit_head or "",
+        "audit_seq": audit_seq,
+        "head_mac": head_mac,
+        "head_seq": head_seq,
+        "root_mac": root_mac,
+    }
+    # ``crypto_version is None`` is the legacy pre-crypto-agility v1 seal
+    # envelope (no ``crypto_version`` field), mirroring ``mutation_envelope``.
+    if crypto_version is not None:
+        payload["crypto_version"] = crypto_version
+    # ``require_signatures is None`` is the legacy pre-#109 seal envelope (no
+    # ``require_signatures`` field); a manifest that declares the field binds
+    # it, so flipping the flag invalidates an existing seal.
+    if require_signatures is not None:
+        payload["require_signatures"] = require_signatures
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+
+
+def seal_message(envelope: bytes) -> bytes:
+    """The 32-byte message signed for a head seal: H(domain || envelope)."""
+    return _sha256(_SEAL_DOMAIN + envelope)
+
+
+def sign_seal(nsec: str, envelope: bytes) -> str:
+    """Schnorr-sign a head seal envelope with the org's nsec. 128-hex."""
+    secret = bytes.fromhex(nsec_to_secret_hex(nsec))
+    return coincurve.PrivateKey(secret).sign_schnorr(seal_message(envelope), None).hex()
+
+
+def verify_seal(pubkey_hex: str, signature_hex: str, envelope: bytes) -> bool:
+    """Verify a head seal signature over ``envelope`` against an x-only pubkey."""
+    try:
+        pubkey = coincurve.PublicKeyXOnly(bytes.fromhex(pubkey_hex))
+        signature = bytes.fromhex(signature_hex)
+        return pubkey.verify(signature, seal_message(envelope))
+    except (ValueError, TypeError):
+        return False
+
+
+# Domain separator for the signing-profile transition (audit #1): a signature
+# over a profile change (mode + actor + head binding), never confused with a
+# mutation or seal signature.
+_PROFILE_DOMAIN = b"phantomdocs-profile-v1"
+
+
+def profile_envelope(
+    *,
+    mode: bool,
+    actor: str,
+    seq: int,
+    prev_head: str,
+    ts: str | None = None,
+    policy_hash: str | None = None,
+    crypto_version: int | None = CRYPTO_VERSION,
+) -> bytes:
+    """The canonical bytes signed for a signing-profile transition (audit #1).
+
+    Binds the target mode (``on``/``off``), the authorizing actor, the
+    monotonic mutation sequence and the committed head it builds on, plus the
+    transition timestamp and the authorizing org-model digest. ``verify``
+    rebuilds this from the manifest's ``profileTransition`` record, so a
+    profile change made without the actor's key — or edited after signing —
+    no longer verifies.
+    """
+    payload = {
+        "actor": actor,
+        "mode": mode,
+        "prev_head": prev_head,
+        "seq": seq,
+    }
+    if ts is not None:
+        payload["ts"] = ts
+    if policy_hash is not None:
+        payload["policy_hash"] = policy_hash
+    if crypto_version is not None:
+        payload["crypto_version"] = crypto_version
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+
+
+def profile_message(envelope: bytes) -> bytes:
+    """The 32-byte message signed for a profile transition: H(domain || envelope)."""
+    return _sha256(_PROFILE_DOMAIN + envelope)
+
+
+def sign_profile(nsec: str, envelope: bytes) -> str:
+    """Schnorr-sign a profile-transition envelope with the actor's nsec."""
+    secret = bytes.fromhex(nsec_to_secret_hex(nsec))
+    return (
+        coincurve.PrivateKey(secret).sign_schnorr(profile_message(envelope), None).hex()
+    )
+
+
+def verify_profile(pubkey_hex: str, signature_hex: str, envelope: bytes) -> bool:
+    """Verify a profile-transition signature against an x-only pubkey."""
+    try:
+        pubkey = coincurve.PublicKeyXOnly(bytes.fromhex(pubkey_hex))
+        signature = bytes.fromhex(signature_hex)
+        return pubkey.verify(signature, profile_message(envelope))
     except (ValueError, TypeError):
         return False
