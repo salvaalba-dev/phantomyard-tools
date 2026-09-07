@@ -283,7 +283,9 @@ def test_read_location_uses_stored_ssh_uri_without_backend_override():
         "path": "ssh://user@example.test:2222/var/phantomdocs",
     }
 
-    with mock.patch("phantomdocs.storage.resolve_backend", return_value=store) as resolve:
+    with mock.patch(
+        "phantomdocs.storage.resolve_backend", return_value=store
+    ) as resolve:
         assert read_location(location, h, root="/unused") == b"remote data"
 
     resolve.assert_called_once_with(location["path"])
