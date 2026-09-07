@@ -34,7 +34,7 @@ from .documents import DocumentError, DocumentService
 from .identity import (
     component_for_folder,
     display_id,
-    doc_version_mac,
+    doc_version_mac_from_hash,
     full_id,
     is_valid_slug,
     node_mac,
@@ -76,6 +76,7 @@ from .storage import (
     LocalBackend,
     StorageError,
     location_uri,
+    read_document,
     read_location,
     read_reference,
     resolve_backend,
@@ -215,28 +216,10 @@ def _read_document_from_locations(node, root: str, backend: str | None):
     Location order is a preference order, not a single point of failure: when a
     replica is unavailable, get can still serve an intact later replica.
     """
-    locations = node.get("locations") or []
-    if not locations:
-        raise click.ClickException(f"document has no locations: {node['urn']}")
-    failures: list[str] = []
-    for index, location in enumerate(locations, 1):
-        try:
-            return (
-                read_location(
-                    location,
-                    node["contentHash"],
-                    root=root,
-                    backend=backend,
-                    streaming=True,
-                ),
-                location,
-            )
-        except StorageError as exc:
-            failures.append(f"location {index}: {exc}")
-    raise click.ClickException(
-        f"unable to read {node['urn']} from any declared location: "
-        + "; ".join(failures)
-    )
+    try:
+        return read_document(node, root=root, backend=backend)
+    except StorageError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _org_pubkey_hex(pubkey: str) -> str:
@@ -393,17 +376,14 @@ def add(
     _validate_slug(slug, "slug")
 
     actor_id, _org = _require_acl(org_yaml, actor)
-    if ref:
-        try:
-            content, ref_location = read_reference(ref, streaming=True)
-        except StorageError as exc:
-            raise click.ClickException(str(exc))
-    else:
-        with open(path, "rb") as f:
-            content = FileContent.from_stream(f)
-        ref_location = None
-
+    content = None
     try:
+        if ref:
+            content, ref_location = read_reference(ref, streaming=True)
+        else:
+            with open(path, "rb") as f:
+                content = FileContent.from_stream(f)
+            ref_location = None
         service = DocumentService(root, org_yaml, actor_id, nsec_file)
         result = service.add_document(
             content=content,
@@ -414,10 +394,11 @@ def add(
             owners=list(owners),
             backend=backend,
         )
-    except DocumentError as exc:
-        raise click.ClickException(str(exc))
+    except (DocumentError, StorageError, OSError) as exc:
+        raise click.ClickException(f"add failed: {exc}") from exc
     finally:
-        content.close()
+        if content is not None:
+            content.close()
 
     if result.get("unchanged"):
         click.echo(f"unchanged: {result['urn']}")
@@ -612,11 +593,11 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
                         issues.append(f"location {index} read failed: {exc}")
                         continue
                     with data:
-                        actual_mac = doc_version_mac(
+                        actual_mac = doc_version_mac_from_hash(
                             node["parentMac"],
                             node.get("previous"),
                             node["slug"],
-                            data,
+                            ch,
                         )
                     if actual_mac != node["mac"]:
                         issues.append(f"location {index} MAC chain mismatch")
@@ -1044,8 +1025,8 @@ def rollback(urn, to_mac, backend, org_yaml, actor, nsec_file, root):
             to_mac=to_mac,
             backend=backend,
         )
-    except DocumentError as exc:
-        raise click.ClickException(str(exc))
+    except (DocumentError, StorageError, OSError) as exc:
+        raise click.ClickException(f"rollback failed: {exc}") from exc
     click.echo(f"rolled back {result['urn']} to {display_id(result['mac'])}")
 
 

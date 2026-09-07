@@ -102,8 +102,20 @@ def doc_version_mac(
     different predecessor) and makes tampering with ``previous`` detectable
     by MAC recomputation.
     """
-    base = previous_mac if previous_mac else parent_mac
-    return node_mac(base, component_for_doc(slug, content))
+    return doc_version_mac_from_hash(
+        parent_mac, previous_mac, slug, content_hash(content)
+    )
+
+
+def doc_version_mac_from_hash(
+    parent_mac: str, previous_mac: str | None, slug: str, digest: str
+) -> str:
+    """Construct a MAC from a digest already computed from verified content."""
+    if not is_valid_hex64(digest):
+        raise ValueError("invalid content digest")
+    raw = slug.encode()
+    component = len(raw).to_bytes(4, "big") + raw + bytes.fromhex(digest)
+    return node_mac(previous_mac or parent_mac, component)
 
 
 def full_id(mac: str) -> str:

@@ -36,7 +36,12 @@ from .audit import head as audit_head
 from .audit import max_seq as audit_max_seq
 from .audit import reconcile as audit_reconcile
 from .content import FileContent
-from .identity import component_for_folder, content_hash, doc_version_mac, node_mac
+from .identity import (
+    component_for_folder,
+    content_hash,
+    doc_version_mac_from_hash,
+    node_mac,
+)
 from .manifest import (
     MANIFEST_FILENAME,
     ManifestError,
@@ -56,7 +61,7 @@ from .signing import (
 )
 from .storage import (
     LocalBackend,
-    read_location,
+    read_document,
     resolve_backend,
 )
 
@@ -566,7 +571,7 @@ class DocumentService:
             # version chains off the tree parent; later versions chain off the
             # previous version, so the history is cryptographically chained and
             # a rollback to older content gets a distinct identity.
-            mac = doc_version_mac(parent_mac, previous, slug, content)
+            mac = doc_version_mac_from_hash(parent_mac, previous, slug, ch)
 
             # Category: a new node uses --category (default 1); versioning an
             # existing node always preserves the existing node's category. A
@@ -773,13 +778,11 @@ class DocumentService:
 
             # Read the target version's content and verify it against its hash.
             ch = target["contentHash"]
-            loc = target.get("locations", [{}])[0]
-            with read_location(
-                loc, ch, root=self.root, backend=backend, streaming=True
-            ) as data:
+            snapshot, _location = read_document(target, root=self.root, backend=backend)
+            with snapshot as data:
                 size = len(data)
-                restored_mac = doc_version_mac(
-                    current["parentMac"], current["mac"], current["slug"], data
+                restored_mac = doc_version_mac_from_hash(
+                    current["parentMac"], current["mac"], current["slug"], ch
                 )
 
             # The new version chains off the current version, so restoring old

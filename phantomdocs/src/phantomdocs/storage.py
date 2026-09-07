@@ -21,6 +21,7 @@ import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
+from functools import wraps
 from urllib.parse import urlparse
 
 from .content import FileContent, write_content
@@ -33,11 +34,34 @@ class StorageError(Exception):
     """Raised when a backend cannot read/write a blob."""
 
 
+def _storage_errors(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        try:
+            return operation(*args, **kwargs)
+        except OSError as exc:
+            raise StorageError(f"{operation.__name__} failed: {exc}") from exc
+
+    return wrapped
+
+
+def _validate_content(data, expected):
+    try:
+        if _content_hash(data) != expected:
+            raise StorageError(f"content hash mismatch for {expected}")
+        return data
+    except BaseException:
+        if isinstance(data, FileContent):
+            data.close()
+        raise
+
+
 def _require_hash(content_hash: str) -> None:
     if not is_valid_hex64(content_hash):
         raise StorageError(f"invalid content hash: {content_hash!r}")
 
 
+@_storage_errors
 def _run_checked(args: list[str], *, stdin=None, text: bool = False, output=None):
     """Run a subprocess without a shell.
 
@@ -183,11 +207,7 @@ class LocalBackend:
         # Content-addressed store: verify the bytes against the requested
         # hash on read, so a mutated blob is refused (integrity on the read
         # path, not only under `pd verify`).
-        if _content_hash(data) != content_hash:
-            if isinstance(data, FileContent):
-                data.close()
-            raise StorageError(f"content hash mismatch for {content_hash}")
-        return data
+        return _validate_content(data, content_hash)
 
     def has(self, content_hash: str) -> bool:
         try:
@@ -492,6 +512,7 @@ def location_uri(location: dict) -> str:
     return f"{backend}://{ref}" if backend else ref
 
 
+@_storage_errors
 def read_location(
     location: dict,
     content_hash: str,
@@ -523,19 +544,56 @@ def read_location(
             # Resolving it as a root would append the shard/hash twice.
             data = read_reference(path, streaming=streaming)[0]
         else:
-            store = resolve_backend(backend) if backend else LocalBackend(root)
+            if stored_backend == "local" and path:
+                # Local put records the full absolute content-addressed path.
+                # Recover the root, then retain all LocalBackend validations.
+                if not isinstance(path, str) or not os.path.isabs(path):
+                    raise StorageError("stored local blob path must be absolute")
+                stored_root = os.path.dirname(os.path.dirname(os.path.dirname(path)))
+                store = LocalBackend(stored_root)
+                if os.path.normpath(path) != os.path.normpath(
+                    store.blob_path(content_hash)
+                ):
+                    raise StorageError(
+                        "stored local blob path does not match content hash"
+                    )
+            else:
+                store = resolve_backend(backend) if backend else LocalBackend(root)
             data = (
                 store.get(content_hash, streaming=True)
                 if streaming
                 else store.get(content_hash)
             )
-    if _content_hash(data) != content_hash:
-        if isinstance(data, FileContent):
-            data.close()
-        raise StorageError(f"content hash mismatch for {content_hash}")
-    return data
+            # Content-addressed adapters validate the requested hash on get.
+            # Do not scan the same snapshot again at this dispatch boundary.
+            return data
+    return _validate_content(data, content_hash)
 
 
+def read_document(node, *, root, backend=None):
+    """Open the first healthy declared replica; caller owns its snapshot."""
+    locations = node.get("locations") or []
+    if not locations:
+        raise StorageError(f"document has no locations: {node['urn']}")
+    failures = []
+    for index, location in enumerate(locations, 1):
+        try:
+            return read_location(
+                location,
+                node["contentHash"],
+                root=root,
+                backend=backend,
+                streaming=True,
+            ), location
+        except StorageError as exc:
+            failures.append(f"location {index}: {exc}")
+    raise StorageError(
+        f"unable to read {node['urn']} from any declared location: "
+        + "; ".join(failures)
+    )
+
+
+@_storage_errors
 def read_reference(uri: str, workspace_py: str | None = None, *, streaming=False):
     """Read the bytes of an external object and return ``(bytes, location)``.
 
