@@ -231,14 +231,23 @@ def truncate(root: str, keep: int) -> None:
     lines = raw_lines(root)
     directory = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".audit-", suffix=".tmp")
+    fd_unclaimed = True
     try:
         with os.fdopen(fd, "wb") as f:
+            # fdopen has taken ownership. The context manager closes it
+            # before an exception reaches the cleanup handler.
+            fd_unclaimed = False
             f.writelines(lines[:keep])
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
         fsync_dir(directory)
     except BaseException:
+        if fd_unclaimed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp)
         except OSError:
