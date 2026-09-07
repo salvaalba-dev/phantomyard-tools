@@ -32,7 +32,6 @@ from .derive import derive_manifest as derive_from_org
 from .documents import DocumentError, DocumentService
 from .identity import (
     component_for_folder,
-    content_hash,
     display_id,
     doc_version_mac,
     full_id,
