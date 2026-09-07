@@ -76,6 +76,7 @@ from .storage import (
     LocalBackend,
     StorageError,
     location_uri,
+    read_location,
     read_reference,
     resolve_backend,
 )
@@ -206,6 +207,35 @@ def _audit(
 
 def _resolve_store(root: str, backend: str | None):
     return resolve_backend(backend) if backend else LocalBackend(root)
+
+
+def _read_document_from_locations(node, root: str, backend: str | None):
+    """Return bytes from the first healthy declared location.
+
+    Location order is a preference order, not a single point of failure: when a
+    replica is unavailable, get can still serve an intact later replica.
+    """
+    locations = node.get("locations") or []
+    if not locations:
+        raise click.ClickException(f"document has no locations: {node['urn']}")
+    failures: list[str] = []
+    for index, location in enumerate(locations, 1):
+        try:
+            return (
+                read_location(
+                    location,
+                    node["contentHash"],
+                    root=root,
+                    backend=backend,
+                ),
+                location,
+            )
+        except StorageError as exc:
+            failures.append(f"location {index}: {exc}")
+    raise click.ClickException(
+        f"unable to read {node['urn']} from any declared location: "
+        + "; ".join(failures)
+    )
 
 
 def _org_pubkey_hex(pubkey: str) -> str:
@@ -430,20 +460,16 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
             f"{normalize_category(node.get('category', 0))} ({node['urn']})"
         )
 
-    location = node.get("locations", [{}])[0]
+    locations = node.get("locations") or []
+    location = locations[0] if locations else {}
+    data = None
+    if cat and node.get("kind") == "doc":
+        data, location = _read_document_from_locations(node, root, backend)
     if "ref" in location:
         click.echo(f"{node['urn']} -> {location_uri(location)}")
     else:
         click.echo(f"{node['urn']} -> {location.get('path', '')}")
-    if cat and node.get("kind") == "doc":
-        loc = node.get("locations", [{}])[0]
-        try:
-            if "ref" in loc:
-                data = read_reference(location_uri(loc))[0]
-            else:
-                data = _resolve_store(root, backend).get(node["contentHash"])
-        except StorageError as exc:
-            raise click.ClickException(str(exc))
+    if data is not None:
         sys.stdout.buffer.write(data)
 
 
@@ -547,7 +573,6 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
         raise click.ClickException(
             f"unsupported crypto version {_crypto!r} (supported: v{CRYPTO_VERSION})"
         )
-    store = _resolve_store(root, backend)
     known_macs = {n["mac"] for n in manifest.get("nodes", [])}
     known_macs.add(manifest["manifest"]["rootMac"])
 
@@ -571,49 +596,25 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
             if not ch:
                 issues.append("missing contentHash")
             else:
-                loc = node.get("locations", [{}])[0]
-                if loc.get("ref"):
+                locations = node.get("locations") or []
+                if not locations:
+                    issues.append("missing locations")
+                for index, loc in enumerate(locations, 1):
                     try:
-                        data = read_reference(location_uri(loc))[0]
-                        if content_hash(data) != ch:
-                            issues.append("content hash mismatch (reference)")
-                        elif (
-                            doc_version_mac(
-                                node["parentMac"],
-                                node.get("previous"),
-                                node["slug"],
-                                data,
-                            )
-                            != node["mac"]
-                        ):
-                            issues.append("MAC chain mismatch")
+                        data = read_location(loc, ch, root=root, backend=backend)
                     except StorageError as exc:
-                        issues.append(f"reference read failed: {exc}")
-                else:
-                    try:
-                        if not store.has(ch):
-                            issues.append("blob missing")
-                        else:
-                            try:
-                                data = store.get(ch)
-                            except StorageError as exc:
-                                issues.append(f"{exc}")
-                                data = None
-                            if data is not None:
-                                if content_hash(data) != ch:
-                                    issues.append("content hash mismatch")
-                                elif (
-                                    doc_version_mac(
-                                        node["parentMac"],
-                                        node.get("previous"),
-                                        node["slug"],
-                                        data,
-                                    )
-                                    != node["mac"]
-                                ):
-                                    issues.append("MAC chain mismatch")
-                    except StorageError as exc:
-                        issues.append(f"backend error: {exc}")
+                        issues.append(f"location {index} read failed: {exc}")
+                        continue
+                    if (
+                        doc_version_mac(
+                            node["parentMac"],
+                            node.get("previous"),
+                            node["slug"],
+                            data,
+                        )
+                        != node["mac"]
+                    ):
+                        issues.append(f"location {index} MAC chain mismatch")
         else:
             if (
                 node_mac(node["parentMac"], component_for_folder(node["slug"]))
