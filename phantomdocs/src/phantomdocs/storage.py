@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import sys
 
 # subprocess is required to shell out to ssh / the persona's workspace.py.
 # Commands are built as argument lists (no shell=True) and inputs validated.
@@ -299,8 +300,8 @@ class GdriveBackend:
             f.write(data)
         try:
             proc = _run_checked(
-                [
-                    self.workspace_py,
+                _workspace_command(self.workspace_py)
+                + [
                     "drive-upload",
                     tmp,
                     "--folder",
@@ -382,13 +383,26 @@ def resolve_backend(uri: str):
     raise StorageError(f"unknown backend scheme: {scheme!r}")
 
 
+def _workspace_command(workspace_py: str) -> list[str]:
+    """Return an executable command for the configured workspace tool.
+
+    A Python script is directly executable on POSIX. On Windows it needs the
+    current Python interpreter, otherwise subprocess raises WinError 193.
+    """
+    resolved = shutil.which(workspace_py) or workspace_py
+    if os.name == "nt" and resolved.lower().endswith(".py"):
+        return [sys.executable, resolved]
+    return [resolved]
+
+
 def _gdrive_download(workspace_py: str, file_id: str) -> bytes:
     """Download a Drive file's raw bytes via the persona's workspace tooling."""
     with tempfile.NamedTemporaryFile(prefix="pd-gdrive-", delete=False) as f:
         tmp = f.name
     try:
         proc = _run_checked(
-            [workspace_py, "drive", "download", file_id, tmp], text=True
+            _workspace_command(workspace_py) + ["drive", "download", file_id, tmp],
+            text=True,
         )
         if proc.returncode != 0:
             detail = proc.stderr.strip()
