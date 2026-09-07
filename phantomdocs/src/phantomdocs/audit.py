@@ -67,12 +67,15 @@ def append(
         entry["sig"] = sig
     if sig_pubkey is not None:
         entry["sigPubkey"] = sig_pubkey
-    line = json.dumps(entry, sort_keys=True) + "\n"
-    with open(path, "a", encoding="utf-8") as f:
+    # Write bytes, not text: on Windows text mode translates "\\n" to
+    # "\\r\\n". The returned hash must cover the exact durable bytes that
+    # head() and verify_chain() later read.
+    line = (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
+    with open(path, "ab") as f:
         f.write(line)
         f.flush()
         os.fsync(f.fileno())
-    return _sha256(line.encode("utf-8"))
+    return _sha256(line)
 
 
 def head(root: str) -> tuple[int, str | None]:
