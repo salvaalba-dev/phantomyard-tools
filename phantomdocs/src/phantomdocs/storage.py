@@ -718,7 +718,13 @@ def read_reference(uri: str, workspace_py: str | None = None, *, streaming=False
             ]
         )
         if proc.returncode != 0:
-            detail = proc.stderr.decode(errors="replace").strip()
+            # proc.stderr follows the caller's text semantics (see _run_checked):
+            # bytes on the non-streaming path, str when text=True is requested.
+            detail = (
+                proc.stderr.strip()
+                if isinstance(proc.stderr, str)
+                else proc.stderr.decode(errors="replace").strip()
+            )
             raise StorageError(
                 f"ssh read failed: {detail}" if detail else "ssh read failed"
             )
