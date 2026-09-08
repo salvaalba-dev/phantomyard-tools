@@ -67,12 +67,15 @@ def append(
         entry["sig"] = sig
     if sig_pubkey is not None:
         entry["sigPubkey"] = sig_pubkey
-    line = json.dumps(entry, sort_keys=True) + "\n"
-    with open(path, "a", encoding="utf-8") as f:
+    # Write bytes, not text: on Windows text mode translates "\\n" to
+    # "\\r\\n". The returned hash must cover the exact durable bytes that
+    # head() and verify_chain() later read.
+    line = (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
+    with open(path, "ab") as f:
         f.write(line)
         f.flush()
         os.fsync(f.fileno())
-    return _sha256(line.encode("utf-8"))
+    return _sha256(line)
 
 
 def head(root: str) -> tuple[int, str | None]:
@@ -228,14 +231,23 @@ def truncate(root: str, keep: int) -> None:
     lines = raw_lines(root)
     directory = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".audit-", suffix=".tmp")
+    fd_unclaimed = True
     try:
         with os.fdopen(fd, "wb") as f:
+            # fdopen has taken ownership. The context manager closes it
+            # before an exception reaches the cleanup handler.
+            fd_unclaimed = False
             f.writelines(lines[:keep])
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
         fsync_dir(directory)
     except BaseException:
+        if fd_unclaimed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp)
         except OSError:

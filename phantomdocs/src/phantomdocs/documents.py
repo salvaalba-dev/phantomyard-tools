@@ -35,7 +35,13 @@ from .audit import append as audit_append
 from .audit import head as audit_head
 from .audit import max_seq as audit_max_seq
 from .audit import reconcile as audit_reconcile
-from .identity import component_for_folder, content_hash, doc_version_mac, node_mac
+from .content import FileContent
+from .identity import (
+    component_for_folder,
+    content_hash,
+    doc_version_mac_from_hash,
+    node_mac,
+)
 from .manifest import (
     MANIFEST_FILENAME,
     ManifestError,
@@ -55,8 +61,7 @@ from .signing import (
 )
 from .storage import (
     LocalBackend,
-    location_uri,
-    read_reference,
+    read_document,
     resolve_backend,
 )
 
@@ -520,7 +525,7 @@ class DocumentService:
     def add_document(
         self,
         *,
-        content: bytes,
+        content: bytes | FileContent,
         ref_location: dict[str, Any] | None,
         slug: str,
         category: str | None,
@@ -548,8 +553,6 @@ class DocumentService:
             urn = f"urn:{repo.org}:doc:{logical}"
 
             existing = repo.node_by_urn(urn)
-            if existing is not None and existing.get("contentHash") == ch:
-                return {"unchanged": True, "urn": urn}
             previous = existing["mac"] if existing is not None else None
             # Tree-position stability: every version of a URN must share one
             # parentMac. When versioning, the tree position is owned by the
@@ -568,7 +571,7 @@ class DocumentService:
             # version chains off the tree parent; later versions chain off the
             # previous version, so the history is cryptographically chained and
             # a rollback to older content gets a distinct identity.
-            mac = doc_version_mac(parent_mac, previous, slug, content)
+            mac = doc_version_mac_from_hash(parent_mac, previous, slug, ch)
 
             # Category: a new node uses --category (default 1); versioning an
             # existing node always preserves the existing node's category. A
@@ -603,6 +606,12 @@ class DocumentService:
                     f"{normalize_category(effective_category)} "
                     f"{'(owner required)' if effective_owners else ''}"
                 )
+
+            # A no-op is still an operation on an existing document.  Check
+            # the existing document's ACL first so a non-owner cannot use an
+            # identical re-add to obtain a successful write-like result.
+            if existing is not None and existing.get("contentHash") == ch:
+                return {"unchanged": True, "urn": urn}
 
             if ref_location is not None:
                 locations = [ref_location]
@@ -769,21 +778,19 @@ class DocumentService:
 
             # Read the target version's content and verify it against its hash.
             ch = target["contentHash"]
-            loc = target.get("locations", [{}])[0]
-            if "ref" in loc:
-                data = read_reference(location_uri(loc))[0]
-            else:
-                store = resolve_backend(backend) if backend else LocalBackend(self.root)
-                data = store.get(ch)
-            if content_hash(data) != ch:
-                raise DocumentError("rollback target content hash mismatch")
+            snapshot, _location = read_document(target, root=self.root, backend=backend)
+            with snapshot as data:
+                size = len(data)
+                restored_mac = doc_version_mac_from_hash(
+                    current["parentMac"], current["mac"], current["slug"], ch
+                )
 
             # The new version chains off the current version, so restoring old
             # content yields a fresh identity (issues #44/#55). Derive slug and
             # urn from `current` (the document being rolled back), not `target`,
             # so the node's tree position always matches its URN path.
             parent_mac = current["parentMac"]
-            mac = doc_version_mac(parent_mac, current["mac"], current["slug"], data)
+            mac = restored_mac
             effective_owners = list(current.get("owners", []) or [])
             new_locations = list(target.get("locations", []) or [])
             node = {
@@ -794,7 +801,7 @@ class DocumentService:
                 "slug": current["slug"],
                 "category": category,
                 "contentHash": ch,
-                "size": len(data),
+                "size": size,
                 "owners": effective_owners,
                 "locations": new_locations,
                 "meta": dict(current.get("meta", {})),

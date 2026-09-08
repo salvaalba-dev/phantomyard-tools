@@ -1,11 +1,17 @@
 import glob
 import os
+import shlex
+import tracemalloc
 from unittest import mock
 
 import yaml
 from click.testing import CliRunner
 
+from phantomdocs.audit import append as audit_append
+from phantomdocs.audit import head as audit_head
+from phantomdocs.audit import verify_chain as audit_verify_chain
 from phantomdocs.cli import main
+from phantomdocs.content import FileContent
 
 # A minimal PhantomOrg org.yaml for ACL enforcement in the CLI tests. Two
 # actors: "roberto" (cfo, level-2 -> categories [1,2]) and "elena"
@@ -1438,3 +1444,252 @@ def test_rollback_rejects_cross_document_target(tmp_path):
     data = yaml.safe_load((tmp_path / "manifest.yaml").read_text(encoding="utf-8"))
     a_nodes = [n for n in data["nodes"] if n["urn"] == "urn:demo:doc:a.txt"]
     assert len(a_nodes) == 1
+
+
+def test_unchanged_add_requires_existing_owner(tmp_path):
+    """An identical re-add must still enforce the existing document's owners."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "x.md"
+    doc.write_text("same bytes", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "x.md",
+                "--owners",
+                "roberto",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ],
+            actor="roberto",
+        ).exit_code
+        == 0
+    )
+
+    # elena can read category-1 but is not an owner. The prior implementation
+    # returned "unchanged" before reaching the write ACL.
+    r = _run(
+        ["add", str(doc), "--slug", "x.md", "--org-yaml", org, "--root", root],
+        actor="elena",
+    )
+    assert r.exit_code != 0
+    assert "denied" in r.output
+
+
+def test_get_falls_back_to_a_healthy_replica(tmp_path):
+    """get --cat skips an unavailable first location and reads a later replica."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "a.txt"
+    doc.write_text("replica content", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "a.txt",
+                "--owners",
+                "cfo",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ]
+        ).exit_code
+        == 0
+    )
+
+    manifest_path = tmp_path / "manifest.yaml"
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    node = data["nodes"][0]
+    original = node["locations"][0]
+    node["locations"] = [
+        {"backend": "file", "ref": f"{tmp_path}/missing-replica.txt"},
+        original,
+    ]
+    manifest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    r = _run(
+        ["get", "a.txt", "--cat", "--org-yaml", org, "--root", root],
+        actor="roberto",
+    )
+    assert r.exit_code == 0, r.output
+    assert "replica content" in r.output
+
+
+def test_verify_checks_every_declared_replica(tmp_path):
+    """A broken secondary location must make verify fail rather than be ignored."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    doc = tmp_path / "a.txt"
+    doc.write_text("replica content", encoding="utf-8")
+    assert (
+        _run(
+            [
+                "add",
+                str(doc),
+                "--slug",
+                "a.txt",
+                "--owners",
+                "cfo",
+                "--org-yaml",
+                org,
+                "--root",
+                root,
+            ]
+        ).exit_code
+        == 0
+    )
+
+    manifest_path = tmp_path / "manifest.yaml"
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    data["nodes"][0]["locations"].append(
+        {"backend": "file", "ref": f"{tmp_path}/missing-replica.txt"}
+    )
+    manifest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    r = _run(["verify", "--root", root])
+    assert r.exit_code != 0
+    assert "location 2 read failed" in r.output
+
+
+def test_audit_hash_matches_durable_bytes(tmp_path):
+    """The audit head must equal append's returned hash on every platform."""
+    expected = audit_append(
+        str(tmp_path),
+        "roberto",
+        "add",
+        "urn:demo:doc:a.txt",
+        "a" * 64,
+        "b" * 64,
+        seq=1,
+    )
+
+    assert audit_head(str(tmp_path)) == (1, expected)
+    assert audit_verify_chain(str(tmp_path)) == []
+
+
+def test_ssh_versions_read_stored_blob_locations(tmp_path):
+    """Real add/get/verify routing with only the SSH process replaced."""
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    remote_files = {}
+
+    def ssh(args, **kwargs):
+        assert args[-2] == "user@example.test"
+        assert args[args.index("-p") + 1] == "2222"
+        command = shlex.split(args[-1])
+        if "stdin" in kwargs:
+            assert command[0] == "mkdir"
+            source = kwargs["stdin"]
+            remote_files[command[-1]] = (
+                source.file.read() if isinstance(source, FileContent) else source
+            )
+            return mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        assert command[0] == "cat"
+        path = command[1]
+        if "output" in kwargs:
+            kwargs["output"].file.write(remote_files.get(path, b""))
+            kwargs["output"].file.seek(0)
+        return mock.Mock(
+            returncode=0 if path in remote_files else 1,
+            stdout=remote_files.get(path, b""),
+            stderr=b"" if path in remote_files else b"No such file",
+        )
+
+    doc = tmp_path / "remote.txt"
+    with mock.patch("phantomdocs.storage._run_checked", side_effect=ssh):
+        for content in ("first version", "second version"):
+            doc.write_text(content, encoding="utf-8")
+            result = _run(
+                [
+                    "add",
+                    str(doc),
+                    "--slug",
+                    "remote.txt",
+                    "--owners",
+                    "cfo",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                    "--backend",
+                    "ssh://user@example.test:2222/var/docs space",
+                ]
+            )
+            assert result.exit_code == 0, result.output
+        manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+        docs = [node for node in manifest["nodes"] if node["kind"] == "doc"]
+        assert len(docs) == 2
+        for extra, expected in (
+            ([], "second version"),
+            (["--mac", docs[0]["mac"]], "first version"),
+        ):
+            result = _run(
+                [
+                    "get",
+                    "remote.txt",
+                    "--cat",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                    *extra,
+                ]
+            )
+            assert result.exit_code == 0, result.output
+            assert expected in result.output
+        result = _run(["verify", "--root", root])
+        assert result.exit_code == 0, result.output
+        remote_files.clear()
+        result = _run(["verify", "--root", root])
+        assert result.exit_code != 0
+        assert "ssh read failed: No such file" in result.output
+
+
+def test_large_add_and_reference_have_bounded_memory(tmp_path):
+    root = str(tmp_path)
+    org = _org(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    source = tmp_path / "large.bin"
+    chunk = b"z" * (1024 * 1024)
+    with source.open("wb") as output:
+        for _ in range(24):
+            output.write(chunk)
+    tracemalloc.start()
+    try:
+        for source_args, slug in (
+            ([str(source)], "stored.bin"),
+            (["--ref", str(source)], "ref.bin"),
+        ):
+            result = _run(
+                [
+                    "add",
+                    *source_args,
+                    "--slug",
+                    slug,
+                    "--owners",
+                    "cfo",
+                    "--org-yaml",
+                    org,
+                    "--root",
+                    root,
+                ]
+            )
+            assert result.exit_code == 0, result.output
+        result = _run(["verify", "--root", root])
+        assert result.exit_code == 0, result.output
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 8 * 1024 * 1024
