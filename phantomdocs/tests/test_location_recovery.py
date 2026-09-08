@@ -372,3 +372,22 @@ def test_bad_restore_blob_is_rejected(tmp_path):
             root=backup.root,
             streaming=True,
         )
+
+
+@pytest.mark.parametrize("backend", ["file", "gdrive"])
+def test_verify_reports_reference_location_without_ref(tmp_path, backend):
+    org = _org(tmp_path)
+    root = str(tmp_path)
+    assert _run(["init", "--org", "demo", "--root", root]).exit_code == 0
+    source = tmp_path / "x.txt"
+    source.write_text("local content")
+    add(tmp_path, org, source)
+    path = tmp_path / "manifest.yaml"
+    manifest = yaml.safe_load(path.read_text())
+    manifest["nodes"][0]["locations"].append(
+        {"backend": backend, "path": "missing-remote-object"}
+    )
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    result = _run(["verify", "--root", root])
+    assert result.exit_code != 0
+    assert f"location 2 read failed: {backend} location requires a ref" in result.output

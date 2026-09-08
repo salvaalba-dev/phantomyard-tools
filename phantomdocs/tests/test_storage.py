@@ -299,3 +299,33 @@ def test_workspace_python_script_uses_python_on_windows():
     script = r"C:\\tools\\workspace.py"
     with mock.patch("phantomdocs.storage.os.name", "nt"):
         assert _workspace_command(script) == [sys.executable, script]
+
+
+@pytest.mark.parametrize("host", ["example.test", "2001:db8::1"])
+def test_ssh_blob_location_round_trips_host(host):
+    payload = b"stored over ssh"
+    digest = _content_hash(payload)
+    store = SshBackend(host, user="user", port=2222, base="/var/docs")
+    proc = mock.Mock(returncode=0, stdout=payload, stderr=b"")
+    with mock.patch("phantomdocs.storage._run_checked", return_value=proc) as run:
+        uri = store.put(digest, payload)
+        assert (
+            read_location({"backend": "ssh", "path": uri}, digest, root=".") == payload
+        )
+        assert run.call_args.args[0][-2] == f"user@{host}"
+        _, location = read_reference(uri)
+        assert read_reference(location["ref"])[0] == payload
+        assert run.call_args.args[0][-2] == f"user@{host}"
+
+
+@pytest.mark.parametrize("backend", ["file", "gdrive"])
+def test_reference_backend_without_ref_does_not_read_local_blob(tmp_path, backend):
+    payload = b"local copy"
+    digest = _content_hash(payload)
+    LocalBackend(str(tmp_path)).put(digest, payload)
+    with pytest.raises(StorageError, match="requires a ref"):
+        read_location(
+            {"backend": backend, "path": "missing-remote-object"},
+            digest,
+            root=str(tmp_path),
+        )

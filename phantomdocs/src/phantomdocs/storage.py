@@ -283,7 +283,9 @@ class SshBackend:
         proc = _run_checked(self._ssh_args() + [cmd], stdin=data)
         if proc.returncode != 0:
             raise StorageError(self._err(proc, "ssh put failed"))
-        return f"ssh://{self.target}:{self.port}{remote}"
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        authority = f"{self.user}@{host}" if self.user else host
+        return f"ssh://{authority}:{self.port}{remote}"
 
     def get(self, content_hash: str, *, streaming=False):
         remote = self.remote_path(content_hash)
@@ -507,6 +509,8 @@ def _ssh_canonical(parsed) -> str:
     through ``read_reference`` without losing its connection target.
     """
     host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
     netloc = f"{parsed.username}@{host}" if parsed.username else host
     port = parsed.port or 22
     if port != 22:
@@ -540,6 +544,8 @@ def _validate_location(location):
         "gdrive",
     ):
         raise StorageError("location backend must be local, file, ssh, or gdrive")
+    if backend in ("file", "gdrive") and "ref" not in location:
+        raise StorageError(f"{backend} location requires a ref")
     field = "ref" if "ref" in location else "path"
     value = location.get(field)
     if not isinstance(value, str) or not value or "\x00" in value:
