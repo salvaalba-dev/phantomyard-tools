@@ -105,11 +105,33 @@ phantomdocs/
 ├── install.sh         # portable install (symlinks bin/ to PATH)
 ├── bin/               # CLI wrappers: pd, phantomdocs (+ .cmd for Windows)
 ├── docs/SPEC.md       # specification
+├── docs/CONSISTENCY.md        # durability: commit order, crash windows, recovery
+├── docs/CRYPTO-AGILITY.md     # crypto-suite versioning
+├── docs/SECURITY-TRUST-ANCHOR.md  # trust anchor + seal-key lifecycle
 ├── examples/          # reference manifest (org-agnostic placeholders)
 ├── src/phantomdocs/   # identity, manifest, storage, access, audit, derive, update, cli
 ├── tests/             # unit + smoke tests
 └── .github/workflows/ci.yml  # lint (ruff/bandit) + tests + smoke
 ```
+
+## Durability and recovery
+
+A mutation is blob → audit append → manifest commit, in that order, with a
+single ordered crash window rather than a distributed transaction. The only
+recoverable state is an **orphaned audit tail** (the audit entry landed, the
+manifest commit did not):
+
+```bash
+# Discard the orphaned tail and re-align the audit log with the manifest.
+pd recover --root ./docs
+```
+
+`pd verify` detects that window, and `pd recover` repairs it; the next
+mutation also self-heals automatically. Anything else — a broken hash chain,
+the audit log *behind* the manifest, a head-hash mismatch — is tampering, not
+a crash, and `pd recover` refuses fail-closed. See
+[`docs/CONSISTENCY.md`](docs/CONSISTENCY.md) for the artifact model, the exact
+failure windows, and what is atomic vs eventually consistent.
 
 ## Status
 
