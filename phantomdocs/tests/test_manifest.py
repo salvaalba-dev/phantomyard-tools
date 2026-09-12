@@ -224,8 +224,9 @@ def test_lineage_tip_is_derived_from_previous_links():
     """The tip is the version no other version names as its ``previous``."""
     data = _two_version_manifest()
     urn = data["nodes"][1]["urn"]
-    assert manifest.lineage_tip_mac(manifest.versions_of(data, urn)) == (
-        data["nodes"][2]["mac"]
+    assert (
+        manifest.lineage_tip_mac(manifest.versions_of(data, urn))
+        == (data["nodes"][2]["mac"])
     )
     # A fork (two tips) is reported as ambiguous, not silently resolved.
     v3 = dict(data["nodes"][2])

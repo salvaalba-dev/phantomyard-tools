@@ -553,9 +553,7 @@ def structural_issues(data: dict[str, Any]) -> list[str]:
         if pointer is None:
             continue
         if pointer not in {v.get("mac") for v in versions}:
-            issues.append(
-                f"{urn}: currentVersions points at unknown version {pointer}"
-            )
+            issues.append(f"{urn}: currentVersions points at unknown version {pointer}")
         elif tip is not None and pointer != tip:
             issues.append(
                 f"{urn}: currentVersions {pointer} is not the lineage tip {tip}"
