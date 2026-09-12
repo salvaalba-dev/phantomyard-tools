@@ -107,14 +107,23 @@ def save(path: str, data: dict[str, Any]) -> None:
     """
     directory = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".manifest-", suffix=".tmp")
+    fd_unclaimed = True
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
+            # fdopen has taken ownership. The context manager closes it
+            # before an exception reaches the cleanup handler.
+            fd_unclaimed = False
             yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
         fsync_dir(directory)
     except BaseException:
+        if fd_unclaimed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp)
         except OSError:

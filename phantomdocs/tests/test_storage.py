@@ -1,3 +1,5 @@
+import os
+import sys
 from unittest import mock
 
 import pytest
@@ -8,6 +10,7 @@ from phantomdocs.storage import (
     LocalBackend,
     SshBackend,
     StorageError,
+    read_location,
     read_reference,
     resolve_backend,
 )
@@ -46,7 +49,7 @@ def test_local_backend_rejects_bad_hash(tmp_path):
 def test_resolve_backend_local():
     b = resolve_backend("local:///tmp/x")
     assert isinstance(b, LocalBackend)
-    assert b.root == "/tmp/x"
+    assert b.root == os.path.abspath("/tmp/x")
 
 
 def test_resolve_backend_local_two_slash():
@@ -59,7 +62,7 @@ def test_resolve_backend_local_two_slash():
 def test_resolve_backend_bare_path():
     b = resolve_backend("/some/dir")
     assert isinstance(b, LocalBackend)
-    assert b.root.endswith("/some/dir")
+    assert b.root == os.path.abspath("/some/dir")
 
 
 def test_resolve_backend_ssh():
@@ -82,9 +85,9 @@ def test_gdrive_backend_put_returns_file_id():
     h = _content_hash(b"x")
 
     def fake_run(args, **kwargs):
-        if args[1] == "drive" and args[2] == "download":
+        if "drive" in args and "download" in args:
             # Read-back: the tool returns the uploaded bytes on download.
-            with open(args[4], "wb") as f:
+            with open(args[args.index("download") + 2], "wb") as f:
                 f.write(b"x")
             return mock.Mock(returncode=0, stdout="", stderr="")
         return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
@@ -119,10 +122,10 @@ def test_gdrive_backend_put_passes_content_hash_flag():
     upload_calls = []
 
     def fake_run(args, **kwargs):
-        if args[1] == "drive-upload":
+        if "drive-upload" in args:
             upload_calls.append(args)
-        elif args[1] == "drive" and args[2] == "download":
-            with open(args[4], "wb") as f:
+        elif "drive" in args and "download" in args:
+            with open(args[args.index("download") + 2], "wb") as f:
                 f.write(b"x")  # read-back
             return mock.Mock(returncode=0, stdout="", stderr="")
         return mock.Mock(returncode=0, stdout="file-abc\n", stderr="")
@@ -270,3 +273,59 @@ def test_ssh_has_quotes_remote_path(monkeypatch):
     b.has("b" * 64)
     cmd = captured["args"][-1]
     assert cmd == "test -f '/var/x; id/blobs/bb/" + "b" * 64 + "'"
+
+
+def test_read_location_uses_stored_ssh_uri_without_backend_override():
+    """An SSH location recorded during add is enough for later reads."""
+    h = _content_hash(b"remote data")
+    store = SshBackend("example.test", user="user", port=2222, base="/var/docs space")
+    proc = mock.Mock(returncode=0, stdout=b"remote data", stderr=b"")
+    with mock.patch("phantomdocs.storage._run_checked", return_value=proc) as run:
+        location = {"backend": "ssh", "path": store.put(h, b"remote data")}
+        assert read_location(location, h, root="/unused") == b"remote data"
+        args = run.call_args.args[0]
+        assert args[-1] == f"cat '{store.remote_path(h)}'"
+        assert args[args.index("-p") + 1] == "2222"
+        assert args[-2] == "user@example.test"
+        proc.stdout = b"corrupt remote data"
+        with pytest.raises(StorageError, match="content hash mismatch"):
+            read_location(location, h, root="/unused")
+
+
+def test_workspace_python_script_uses_python_on_windows():
+    """A configured .py workspace tool must be executable on Windows."""
+    from phantomdocs.storage import _workspace_command
+
+    script = r"C:\\tools\\workspace.py"
+    with mock.patch("phantomdocs.storage.os.name", "nt"):
+        assert _workspace_command(script) == [sys.executable, script]
+
+
+@pytest.mark.parametrize("host", ["example.test", "2001:db8::1"])
+def test_ssh_blob_location_round_trips_host(host):
+    payload = b"stored over ssh"
+    digest = _content_hash(payload)
+    store = SshBackend(host, user="user", port=2222, base="/var/docs")
+    proc = mock.Mock(returncode=0, stdout=payload, stderr=b"")
+    with mock.patch("phantomdocs.storage._run_checked", return_value=proc) as run:
+        uri = store.put(digest, payload)
+        assert (
+            read_location({"backend": "ssh", "path": uri}, digest, root=".") == payload
+        )
+        assert run.call_args.args[0][-2] == f"user@{host}"
+        _, location = read_reference(uri)
+        assert read_reference(location["ref"])[0] == payload
+        assert run.call_args.args[0][-2] == f"user@{host}"
+
+
+@pytest.mark.parametrize("backend", ["file", "gdrive"])
+def test_reference_backend_without_ref_does_not_read_local_blob(tmp_path, backend):
+    payload = b"local copy"
+    digest = _content_hash(payload)
+    LocalBackend(str(tmp_path)).put(digest, payload)
+    with pytest.raises(StorageError, match="requires a ref"):
+        read_location(
+            {"backend": backend, "path": "missing-remote-object"},
+            digest,
+            root=str(tmp_path),
+        )

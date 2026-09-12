@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import nullcontext
 
 import click
 
@@ -28,13 +29,13 @@ from .audit import read as audit_read
 from .audit import reconcile as audit_reconcile
 from .audit import sequence_issues as audit_sequence_issues
 from .audit import verify_chain as audit_verify_chain
+from .content import FileContent
 from .derive import derive_manifest as derive_from_org
 from .documents import DocumentError, DocumentService
 from .identity import (
     component_for_folder,
-    content_hash,
     display_id,
-    doc_version_mac,
+    doc_version_mac_from_hash,
     full_id,
     is_valid_slug,
     node_mac,
@@ -76,6 +77,8 @@ from .storage import (
     LocalBackend,
     StorageError,
     location_uri,
+    read_document,
+    read_location,
     read_reference,
     resolve_backend,
 )
@@ -206,6 +209,18 @@ def _audit(
 
 def _resolve_store(root: str, backend: str | None):
     return resolve_backend(backend) if backend else LocalBackend(root)
+
+
+def _read_document_from_locations(node, root: str, backend: str | None):
+    """Return bytes from the first healthy declared location.
+
+    Location order is a preference order, not a single point of failure: when a
+    replica is unavailable, get can still serve an intact later replica.
+    """
+    try:
+        return read_document(node, root=root, backend=backend)
+    except StorageError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _org_pubkey_hex(pubkey: str) -> str:
@@ -361,18 +376,15 @@ def add(
 
     _validate_slug(slug, "slug")
 
-    if ref:
-        try:
-            content, ref_location = read_reference(ref)
-        except StorageError as exc:
-            raise click.ClickException(str(exc))
-    else:
-        with open(path, "rb") as f:
-            content = f.read()
-        ref_location = None
-
     actor_id, _org = _require_acl(org_yaml, actor)
+    content = None
     try:
+        if ref:
+            content, ref_location = read_reference(ref, streaming=True)
+        else:
+            with open(path, "rb") as f:
+                content = FileContent.from_stream(f)
+            ref_location = None
         service = DocumentService(root, org_yaml, actor_id, nsec_file)
         result = service.add_document(
             content=content,
@@ -383,8 +395,11 @@ def add(
             owners=list(owners),
             backend=backend,
         )
-    except DocumentError as exc:
-        raise click.ClickException(str(exc))
+    except (DocumentError, StorageError, OSError) as exc:
+        raise click.ClickException(f"add failed: {exc}") from exc
+    finally:
+        if content is not None:
+            content.close()
 
     if result.get("unchanged"):
         click.echo(f"unchanged: {result['urn']}")
@@ -430,21 +445,18 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
             f"{normalize_category(node.get('category', 0))} ({node['urn']})"
         )
 
-    location = node.get("locations", [{}])[0]
-    if "ref" in location:
-        click.echo(f"{node['urn']} -> {location_uri(location)}")
-    else:
-        click.echo(f"{node['urn']} -> {location.get('path', '')}")
+    locations = node.get("locations") or []
+    location = locations[0] if locations else {}
+    data = None
     if cat and node.get("kind") == "doc":
-        loc = node.get("locations", [{}])[0]
-        try:
-            if "ref" in loc:
-                data = read_reference(location_uri(loc))[0]
-            else:
-                data = _resolve_store(root, backend).get(node["contentHash"])
-        except StorageError as exc:
-            raise click.ClickException(str(exc))
-        sys.stdout.buffer.write(data)
+        data, location = _read_document_from_locations(node, root, backend)
+    with data if data is not None else nullcontext():
+        if "ref" in location:
+            click.echo(f"{node['urn']} -> {location_uri(location)}")
+        else:
+            click.echo(f"{node['urn']} -> {location.get('path', '')}")
+        if data is not None:
+            data.copy_to(sys.stdout.buffer)
 
 
 @main.command()
@@ -547,7 +559,6 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
         raise click.ClickException(
             f"unsupported crypto version {_crypto!r} (supported: v{CRYPTO_VERSION})"
         )
-    store = _resolve_store(root, backend)
     known_macs = {n["mac"] for n in manifest.get("nodes", [])}
     known_macs.add(manifest["manifest"]["rootMac"])
 
@@ -571,49 +582,26 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, root):
             if not ch:
                 issues.append("missing contentHash")
             else:
-                loc = node.get("locations", [{}])[0]
-                if loc.get("ref"):
+                locations = node.get("locations") or []
+                if not locations:
+                    issues.append("missing locations")
+                for index, loc in enumerate(locations, 1):
                     try:
-                        data = read_reference(location_uri(loc))[0]
-                        if content_hash(data) != ch:
-                            issues.append("content hash mismatch (reference)")
-                        elif (
-                            doc_version_mac(
-                                node["parentMac"],
-                                node.get("previous"),
-                                node["slug"],
-                                data,
-                            )
-                            != node["mac"]
-                        ):
-                            issues.append("MAC chain mismatch")
+                        data = read_location(
+                            loc, ch, root=root, backend=backend, streaming=True
+                        )
                     except StorageError as exc:
-                        issues.append(f"reference read failed: {exc}")
-                else:
-                    try:
-                        if not store.has(ch):
-                            issues.append("blob missing")
-                        else:
-                            try:
-                                data = store.get(ch)
-                            except StorageError as exc:
-                                issues.append(f"{exc}")
-                                data = None
-                            if data is not None:
-                                if content_hash(data) != ch:
-                                    issues.append("content hash mismatch")
-                                elif (
-                                    doc_version_mac(
-                                        node["parentMac"],
-                                        node.get("previous"),
-                                        node["slug"],
-                                        data,
-                                    )
-                                    != node["mac"]
-                                ):
-                                    issues.append("MAC chain mismatch")
-                    except StorageError as exc:
-                        issues.append(f"backend error: {exc}")
+                        issues.append(f"location {index} read failed: {exc}")
+                        continue
+                    with data:
+                        actual_mac = doc_version_mac_from_hash(
+                            node["parentMac"],
+                            node.get("previous"),
+                            node["slug"],
+                            ch,
+                        )
+                    if actual_mac != node["mac"]:
+                        issues.append(f"location {index} MAC chain mismatch")
         else:
             if (
                 node_mac(node["parentMac"], component_for_folder(node["slug"]))
@@ -1038,8 +1026,8 @@ def rollback(urn, to_mac, backend, org_yaml, actor, nsec_file, root):
             to_mac=to_mac,
             backend=backend,
         )
-    except DocumentError as exc:
-        raise click.ClickException(str(exc))
+    except (DocumentError, StorageError, OSError) as exc:
+        raise click.ClickException(f"rollback failed: {exc}") from exc
     click.echo(f"rolled back {result['urn']} to {display_id(result['mac'])}")
 
 

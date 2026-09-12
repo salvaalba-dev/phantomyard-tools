@@ -19,6 +19,8 @@ from __future__ import annotations
 import hashlib
 import re
 
+from .content import FileContent
+
 DISPLAY_BYTES = 16  # 128-bit truncation floor (RFC 6920 "sha-256-128")
 
 
@@ -44,9 +46,9 @@ def is_valid_slug(slug: str) -> bool:
     return bool(slug) and ".." not in slug and _SLUG_RE.match(slug) is not None
 
 
-def content_hash(data: bytes) -> str:
+def content_hash(data: bytes | FileContent) -> str:
     """SHA-256 hex digest of raw content bytes."""
-    return _sha256(data).hex()
+    return (data.digest() if isinstance(data, FileContent) else _sha256(data)).hex()
 
 
 def root_mac(org_id: str, org_pubkey: str, namespace: str) -> str:
@@ -71,11 +73,11 @@ def component_for_folder(slug: str) -> bytes:
     return len(raw).to_bytes(4, "big") + raw
 
 
-def component_for_doc(slug: str, content: bytes) -> bytes:
+def component_for_doc(slug: str, content: bytes | FileContent) -> bytes:
     """Document component = len(slug) || slug || H(content). The slug is
     length-prefixed so a slug boundary can never be ambiguous."""
     raw = slug.encode()
-    return len(raw).to_bytes(4, "big") + raw + _sha256(content)
+    return len(raw).to_bytes(4, "big") + raw + bytes.fromhex(content_hash(content))
 
 
 def node_mac(parent_mac: str, component: bytes) -> str:
@@ -84,7 +86,7 @@ def node_mac(parent_mac: str, component: bytes) -> str:
 
 
 def doc_version_mac(
-    parent_mac: str, previous_mac: str | None, slug: str, content: bytes
+    parent_mac: str, previous_mac: str | None, slug: str, content: bytes | FileContent
 ) -> str:
     """The identity of a document version (issue #44).
 
@@ -100,8 +102,20 @@ def doc_version_mac(
     different predecessor) and makes tampering with ``previous`` detectable
     by MAC recomputation.
     """
-    base = previous_mac if previous_mac else parent_mac
-    return node_mac(base, component_for_doc(slug, content))
+    return doc_version_mac_from_hash(
+        parent_mac, previous_mac, slug, content_hash(content)
+    )
+
+
+def doc_version_mac_from_hash(
+    parent_mac: str, previous_mac: str | None, slug: str, digest: str
+) -> str:
+    """Construct a MAC from a digest already computed from verified content."""
+    if not is_valid_hex64(digest):
+        raise ValueError("invalid content digest")
+    raw = slug.encode()
+    component = len(raw).to_bytes(4, "big") + raw + bytes.fromhex(digest)
+    return node_mac(previous_mac or parent_mac, component)
 
 
 def full_id(mac: str) -> str:
