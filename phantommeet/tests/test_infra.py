@@ -304,3 +304,30 @@ def test_check_persona_state_meetings_stale_when_appendix_missing(
     meetings = [r for r in results if r.name.endswith(" Meetings.md")]
     assert meetings and meetings[0].state == "fail"
     assert "stale content" in meetings[0].detail
+
+
+def test_check_persona_state_meetings_joins_multiple_appendix_blocks(
+    tmp_path: Path,
+) -> None:
+    """With two ``kb_appendix`` blocks the doctor must compare against the
+    blocks joined by the exact ``---`` rule ``apply`` writes. The single-block
+    smoke fixture never exercises the join separator (#128 review note), so a
+    wrong separator would go unnoticed."""
+    from phantommeet.apply import MARKER_END, MARKER_START
+
+    manifest = _renderable_manifest()
+    manifest["kb_appendix"] = [
+        "## Apéndice A\n\nPrimera nota.",
+        "## Apéndice B\n\nSegunda nota.",
+    ]
+    body = _render_managed_body_for_test(manifest, "maria")
+    # Pin the spec: consecutive blocks are separated by an exact `---` rule.
+    assert "Primera nota.\n\n---\n\n## Apéndice B" in body
+    persona_dir = tmp_path / "maria"
+    kb = persona_dir / "kb" / "procedures" / "Meetings.md"
+    kb.parent.mkdir(parents=True)
+    kb.write_text(f"{MARKER_START}\n{body}{MARKER_END}\n", encoding="utf-8")
+
+    results = check_persona_state("maria", persona_dir, manifest)
+    meetings = [r for r in results if r.name.endswith(" Meetings.md")]
+    assert meetings and meetings[0].state == "ok", meetings
