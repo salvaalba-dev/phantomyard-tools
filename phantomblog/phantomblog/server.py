@@ -8,7 +8,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import subprocess
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -21,7 +20,7 @@ def token_from_reference(reference, persona):
     elif reference.startswith("vault:") and persona:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", reference[6:]) or not re.fullmatch(r"[a-zA-Z0-9_-]+", persona):
             raise core.Invalid("Invalid vault reference/persona")
-        executable = shutil.which("phantombot")
+        executable = connectors.executable_path()
         if not executable:
             raise core.Invalid("Phantombot is required to resolve a vault token")
         if executable.lower().endswith((".cmd", ".bat")):

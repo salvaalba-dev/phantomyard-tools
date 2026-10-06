@@ -97,8 +97,16 @@ publication's unpublished material.
 External adapter calls require an executable Phantombot runtime. Windows `.cmd`
 and `.bat` wrappers are refused for those calls to avoid passing article text
 through a batch interpreter. The Python dashboard and generator work on Windows;
-configure external integrations on a supported executable runtime, such as the
-target Linux deployment host.
+use the installed native `phantombot.exe` for external integrations. If it is not
+on PATH, select its absolute path for the current PowerShell session:
+
+```powershell
+$env:PHANTOMBLOG_PHANTOMBOT_EXECUTABLE = 'C:\Users\YOUR_USER\AppData\Local\Programs\phantombot\phantombot.exe'
+```
+
+This selection is used for connector calls and vault token resolution. It does
+not change the system PATH or active persona. An invalid explicit path fails
+instead of silently selecting another runtime. Linux/macOS executables also work.
 
 ## PhantomChat
 

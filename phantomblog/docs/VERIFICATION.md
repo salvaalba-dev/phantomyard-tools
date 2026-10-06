@@ -56,8 +56,13 @@ the website dictionary translator.
 ## External limits
 
 MCP adapter calls, receipts, failures and memory capture were tested with synthetic
-providers, and HTTP verification with a local fixture server. Phantombot and real
-platform accounts are not configured on this machine, so no production OAuth,
+providers, and HTTP verification with a local fixture server. A subsequent real
+installation check found native Windows Phantombot v1.1.422, outside the session
+PATH. Its executable runs, and its MCP registration/call help matches the adapter
+contract. The default persona's registry listed no MCP servers. Explicit runtime
+path selection was added and tested; no persona registry was changed in that
+check. End-to-end MCP tool invocation still requires selecting a test persona.
+No real platform accounts were exercised, so no production OAuth,
 PhantomChat delivery, deployment or social post is claimed as verified. That is a
 separate setup/acceptance step on the target installation. The source includes
 configuration instructions and exposes unavailable connections accurately.

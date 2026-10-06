@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -64,9 +66,20 @@ def validate_connections(connections):
             walk(spec["arguments"])
 
 
+def executable_path():
+    """An explicit operator-selected executable never falls back silently."""
+    selected = os.environ.get("PHANTOMBLOG_PHANTOMBOT_EXECUTABLE")
+    if selected:
+        path = Path(selected)
+        if not path.is_absolute() or not path.is_file() or path.suffix.lower() in (".cmd", ".bat"):
+            raise Invalid("PHANTOMBLOG_PHANTOMBOT_EXECUTABLE must name an existing absolute executable path, not a batch wrapper")
+        return str(path)
+    return shutil.which("phantombot")
+
+
 class Runner:
     def __init__(self):
-        self.executable = shutil.which("phantombot")
+        self.executable = executable_path()
 
     def run(self, args):
         if not self.executable:

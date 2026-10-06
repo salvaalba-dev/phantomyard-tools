@@ -1,5 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -143,6 +144,13 @@ class ConnectorTests(unittest.TestCase):
             runner = connectors.Runner()
             self.assertFalse(runner.capture('synthetic-editor', 'Untrusted $(text)'))
             run.assert_not_called()
+        with patch.dict(os.environ, {'PHANTOMBLOG_PHANTOMBOT_EXECUTABLE': str(self.root / 'missing.exe')}):
+            with self.assertRaises(core.Invalid):
+                connectors.Runner()
+        binary = self.root / 'fixture-runtime.exe'
+        binary.write_bytes(b'Synthetic path fixture; never execute')
+        with patch.dict(os.environ, {'PHANTOMBLOG_PHANTOMBOT_EXECUTABLE': str(binary)}):
+            self.assertEqual(connectors.Runner().executable, str(binary))
 
 
 if __name__ == '__main__':
