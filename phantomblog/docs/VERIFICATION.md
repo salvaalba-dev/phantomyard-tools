@@ -72,7 +72,10 @@ persona: a human-authorized request was sent through the signed-in browser clien
 the persona read the registered PhantomBlog snapshot and submitted a proposal.
 An independent comparison confirmed only the supplied English/Spanish title edits,
 the original source revision, unchanged saved source and draft status. The proposal
-loaded in the dashboard for review; it was not applied or published. A temporary
+loaded in the dashboard for review and remained unapplied until the user's explicit
+approval. After approval it was applied through the dashboard, both language
+previews showed the exact titles, and build/check passed. Draft article pages were
+excluded from public output; nothing was deployed or socially shared. A temporary
 directory inaccessible to the live harness initially prevented this flow. Placing
 the synthetic draft under the repository's ignored `workspace/` resolved it without
 changing permissions, identities or the active persona. This verifies direct chat
