@@ -27,6 +27,13 @@ and authorize the actual MCP server; do not invent a tool name from a platform n
 6. Test the mapping with a provider sandbox/test account and a separately approved
    operation before relying on production publication.
 
+Native Windows Phantombot v1.1.422 returns a human-readable list from `mcp describe`.
+PhantomBlog accepts its checked server/count/tool-name format for discovery only;
+JSON discovery responses remain supported. This listing does not provide argument
+schemas or prove account authorization. Obtain the actual argument schema from
+the registered MCP server; do not infer it from a description. Tool calls still
+require JSON responses, and unfamiliar discovery formats fail closed.
+
 The selection list includes Facebook, Instagram, LinkedIn, X, Mastodon, Bluesky,
 YouTube, Pinterest, TikTok, PhantomChat, deployment and custom. These are adapter
 labels; compatible tools and media requirements must be checked on the target

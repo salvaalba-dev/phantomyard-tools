@@ -81,21 +81,29 @@ class Runner:
     def __init__(self):
         self.executable = executable_path()
 
-    def run(self, args):
+    def run(self, args, discovery=False):
         if not self.executable:
             raise ExternalFailure("Phantombot is not installed on this machine")
         if self.executable.lower().endswith((".cmd", ".bat")):
             raise ExternalFailure("Use a Phantombot executable runtime; batch wrappers are not supported for external adapter calls")
         try:
             # No shell interpolation. Never echo provider output: it can contain secrets.
-            result = subprocess.run([self.executable, *args], capture_output=True, text=True, timeout=60, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            result = subprocess.run([self.executable, *args], capture_output=True, encoding='utf-8', timeout=60, check=False)
+        except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
             raise ExternalFailure("Phantombot call failed or timed out; reconcile before retry") from exc
         if result.returncode:
             raise ExternalFailure("Phantombot returned an error; inspect its private diagnostics")
         try:
             return json.loads(result.stdout)
         except ValueError as exc:
+            if discovery:
+                # v1.1.422 describe is a human-readable listing, not JSON.
+                # This establishes names only, never schemas or authorization.
+                lines = result.stdout.strip().splitlines()
+                header = re.fullmatch(re.escape(args[2]) + r': ([0-9]+) tool\(s\)', lines[0]) if lines else None
+                names = [re.match(r'^  ([a-zA-Z0-9_.-]+)\s+[—–-]\s', line) for line in lines[1:]]
+                if header and all(names) and len(names) == int(header[1]):
+                    return {'tools': [{'name': match[1]} for match in names]}
             raise ExternalFailure("Phantombot returned an unexpected response") from exc
 
     def call(self, connection, spec, arguments):
@@ -111,7 +119,7 @@ class Runner:
             return False
 
     def describe(self, connection):
-        return self.run(["mcp", "describe", connection["server"], "--persona", connection["persona"]])
+        return self.run(["mcp", "describe", connection["server"], "--persona", connection["persona"]], discovery=True)
 
 
 def substitute(value, variables):

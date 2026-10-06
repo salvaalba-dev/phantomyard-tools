@@ -132,6 +132,19 @@ class ConnectorTests(unittest.TestCase):
         results=connectors.connection_status(self.root,self.runner)
         self.assertTrue(all(r['state']=='discovered' for r in results))
 
+    def test_native_runtime_discovery_listing_is_names_only(self):
+        with patch('phantomblog.connectors.shutil.which', return_value='/fixture/phantombot'), patch('phantomblog.connectors.subprocess.run') as run:
+            runner = connectors.Runner()
+            run.return_value.returncode = 0
+            run.return_value.stdout = 'fixture-server: 1 tool(s)\n  fixture_tool  — Fixture description\n'
+            self.assertEqual(runner.describe({'server': 'fixture-server', 'persona': 'synthetic-editor'}), {'tools': [{'name': 'fixture_tool'}]})
+            self.assertEqual(run.call_args.kwargs['encoding'], 'utf-8')
+            with self.assertRaises(connectors.ExternalFailure):
+                runner.run(['mcp', 'call', 'fixture-server', 'fixture_tool'])
+            run.return_value.stdout = 'fixture-server: 2 tool(s)\n  fixture_tool  — Fixture description\n'
+            with self.assertRaises(connectors.ExternalFailure):
+                runner.describe({'server': 'fixture-server', 'persona': 'synthetic-editor'})
+
     def test_runner_uses_explicit_persona_and_no_shell(self):
         with patch('phantomblog.connectors.shutil.which',return_value='/fixture/phantombot'),patch('phantomblog.connectors.subprocess.run') as run:
             run.return_value.returncode=0;run.return_value.stdout='{"structuredContent":{"ok":true,"id":"x"}}'

@@ -44,6 +44,11 @@ def call(root, name, args):
 
 
 def serve(root, stdin=None, stdout=None):
+    # MCP transport is UTF-8 even when the Windows console locale is cp1252.
+    if stdin is None and hasattr(sys.stdin, 'reconfigure'):
+        sys.stdin.reconfigure(encoding='utf-8')
+    if stdout is None and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     initialized = False
     for line in stdin:

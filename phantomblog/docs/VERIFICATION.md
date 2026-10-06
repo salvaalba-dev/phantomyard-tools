@@ -13,7 +13,7 @@ node --check phantomblog/resources/dashboard.js
 bash -n install.sh
 ```
 
-The suite contains 53 tests covering catalogue/date/slug/category validation,
+The suite contains 54 tests covering catalogue/date/slug/category validation,
 language completeness, raster assets and uploads, escaped metadata, authored body
 HTML, scoped CSS, shared template validation, output ownership, invalid-input
 preservation, deterministic builds and read-only commands. It also checks legacy
@@ -61,11 +61,27 @@ installation check found native Windows Phantombot v1.1.422, outside the session
 PATH. Its executable runs, and its MCP registration/call help matches the adapter
 contract. The default persona's registry listed no MCP servers. Explicit runtime
 path selection was added and tested; no persona registry was changed in that
-check. End-to-end MCP tool invocation still requires selecting a test persona.
+check. Real MCP acceptance subsequently passed on an explicitly selected existing
+persona: tool discovery, bilingual snapshot (Spanish accents preserved), read-only
+dry run, deterministic builds, two-language pagination, proposal creation without
+application, and prepare-only publication. The uniquely named temporary registry
+entry and synthetic workspace were removed afterwards. This caught and fixed the
+runtime's human-readable discovery format and Windows UTF-8 transport issue.
 No real platform accounts were exercised, so no production OAuth,
 PhantomChat delivery, deployment or social post is claimed as verified. That is a
 separate setup/acceptance step on the target installation. The source includes
 configuration instructions and exposes unavailable connections accurately.
+
+To repeat the opt-in real installation test (it temporarily registers a local
+server for the selected persona; it does not message or publish):
+
+```powershell
+python tests/runtime_acceptance.py --executable 'C:\absolute\path\phantombot.exe' --persona YOUR_TEST_PERSONA
+```
+
+Use an actual lowercase persona name. The acceptance runner never changes the
+active persona or removes an unrelated connection. The regular CI suite uses
+synthetic providers and does not require an installed Phantombot runtime.
 
 The existing Aquaponics repository was checked separately: it remains at commit
 `5555ac7`, with only its previously unrelated authoring prompt untracked. No new
