@@ -101,6 +101,13 @@ snapshot, validation, local build, proposal and publication preparation; it does
 not expose external execution. Register it only for personas allowed to read that
 publication's unpublished material.
 
+Test access from a real chat turn as well as from your terminal. On Windows the
+live harness may be unable to read a temporary directory created by a separate
+restricted process, even when a standalone MCP acceptance test succeeds. Use a
+private workspace inside the intended repository, such as the ignored `workspace/`
+directory, and verify `phantomblog_snapshot` through the live persona. Do not fix
+this by widening identity/vault permissions or publishing draft sources.
+
 External adapter calls require an executable Phantombot runtime. Windows `.cmd`
 and `.bat` wrappers are refused for those calls to avoid passing article text
 through a batch interpreter. The Python dashboard and generator work on Windows;

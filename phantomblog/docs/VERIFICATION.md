@@ -67,9 +67,19 @@ dry run, deterministic builds, two-language pagination, proposal creation withou
 application, and prepare-only publication. The uniquely named temporary registry
 entry and synthetic workspace were removed afterwards. This caught and fixed the
 runtime's human-readable discovery format and Windows UTF-8 transport issue.
-No real platform accounts were exercised, so no production OAuth,
-PhantomChat delivery, deployment or social post is claimed as verified. That is a
-separate setup/acceptance step on the target installation. The source includes
+The direct PhantomChat editing workflow subsequently passed with a running
+persona: a human-authorized request was sent through the signed-in browser client,
+the persona read the registered PhantomBlog snapshot and submitted a proposal.
+An independent comparison confirmed only the supplied English/Spanish title edits,
+the original source revision, unchanged saved source and draft status. The proposal
+loaded in the dashboard for review; it was not applied or published. A temporary
+directory inaccessible to the live harness initially prevented this flow. Placing
+the synthetic draft under the repository's ignored `workspace/` resolved it without
+changing permissions, identities or the active persona. This verifies direct chat
+delivery, not the dashboard's optional messaging MCP adapter.
+
+No production OAuth, deployment or social post is claimed as verified. Those are
+separate setup/acceptance steps on the target installation. The source includes
 configuration instructions and exposes unavailable connections accurately.
 
 To repeat the opt-in real installation test (it temporarily registers a local
