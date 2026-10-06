@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from phantomblog import core, server, mcp
-from fixtures import create
+from fixtures import create, adapter
 
 
 class ServerTests(unittest.TestCase):
@@ -98,9 +98,24 @@ class ServerTests(unittest.TestCase):
         model,revision=core.load(self.root);model['site']['name']='Reviewed agent change'
         mcp.call(self.root,'phantomblog_propose',{'model':model,'revision':revision})
         _,data,_=self.request('/api/proposal');proposal=json.loads(data)
+        self.assertEqual(proposal['reviewRevision'], revision)
+        self.assertEqual(proposal['changes'][0]['field'], 'Site / Name')
+        self.assertEqual(proposal['changes'][0]['before'], 'PhantomBlog test fixture')
         self.assertEqual(core.load(self.root)[0]['site']['name'],'PhantomBlog test fixture')
         self.assertEqual(self.request('/api/apply-proposal',{'proposalHash':proposal['proposalHash']})[0],200)
         self.assertEqual(core.load(self.root)[0]['site']['name'],'Reviewed agent change')
+
+    def test_connection_mapping_preview_is_read_only_and_not_account_verification(self):
+        before = core.load(self.root)[1]
+        status, data, _ = self.request('/api/connection-preview', {'id': 'fixture', 'connection': adapter()})
+        self.assertEqual(status, 200);self.assertTrue(json.loads(data)['mappingValid'])
+        self.assertFalse(json.loads(data)['accountVerified']);self.assertEqual(core.load(self.root)[1], before)
+        invalid = adapter();invalid['capabilities']['share']['arguments']['access_token'] = 'synthetic-secret'
+        self.assertEqual(self.request('/api/connection-preview', {'id': 'fixture', 'connection': invalid})[0], 422)
+        self.assertEqual(self.request('/api/connection-preview', {'id': 'fixture', 'connection': adapter()}, auth=False)[0], 401)
+        self.assertEqual(core.load(self.root)[1], before)
+        invalid = adapter('message', 'facebook')
+        self.assertEqual(self.request('/api/connection-preview', {'id': 'fixture', 'connection': invalid})[0], 422)
 
     def test_external_execution_requires_reviewed_plan(self):
         self.assertEqual(self.request('/api/execute',{'approval':'invented'})[0],422)

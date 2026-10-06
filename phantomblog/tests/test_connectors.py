@@ -131,6 +131,9 @@ class ConnectorTests(unittest.TestCase):
     def test_configured_tools_discovery_not_account_verification(self):
         results=connectors.connection_status(self.root,self.runner)
         self.assertTrue(all(r['state']=='discovered' for r in results))
+        self.runner.describe = lambda c: {'tools': [{'name': 'unrelated', 'description': ' '.join(s['tool'] for s in c['capabilities'].values())}]}
+        results = connectors.connection_status(self.root, self.runner)
+        self.assertTrue(all(r['state'] == 'tool-not-discovered' for r in results))
 
     def test_native_runtime_discovery_listing_is_names_only(self):
         with patch('phantomblog.connectors.shutil.which', return_value='/fixture/phantombot'), patch('phantomblog.connectors.subprocess.run') as run:

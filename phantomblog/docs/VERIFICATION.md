@@ -13,7 +13,7 @@ node --check phantomblog/resources/dashboard.js
 bash -n install.sh
 ```
 
-The suite contains 54 tests covering catalogue/date/slug/category validation,
+The suite contains 58 tests covering catalogue/date/slug/category validation,
 language completeness, raster assets and uploads, escaped metadata, authored body
 HTML, scoped CSS, shared template validation, output ownership, invalid-input
 preservation, deterministic builds and read-only commands. It also checks legacy
@@ -99,3 +99,17 @@ synthetic providers and does not require an installed Phantombot runtime.
 The existing Aquaponics repository was checked separately: it remains at commit
 `5555ac7`, with only its previously unrelated authoring prompt untracked. No new
 Aquaponics content, server sync or cron change was made for PhantomBlog.
+
+The proposal review and guided connection setup were checked in the browser at
+1440 x 900 and 390 x 844 using disposable fixtures. Both language title changes
+appeared as named before/after fields; HTML-like metadata remained literal text
+with no injected image or script. Unsaved edits disabled proposal application.
+Connection mapping checks left saved source untouched, credential arguments were
+rejected, valid mappings could be added and saved, and an unavailable synthetic
+server showed its actual status without claiming account authorization. Neither
+view caused horizontal page overflow at the mobile width. A placeholder rendering
+error found during browser verification was corrected and rechecked.
+
+For a disposable review demonstration, run `python tests/preview.py --port 8791
+--proposal-demo` on one line from the tool directory. It never adds sample articles
+to a real workspace.

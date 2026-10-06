@@ -43,6 +43,15 @@ build engine.
 
 ## Adapter contract
 
+The dashboard guides setup through three steps: choose the registered connection,
+map its tool, and check/save. **Check mapping** validates locally without saving or
+contacting a provider. Invalid mappings never replace draft settings. After adding
+the mapping, use **Save changes**, then **Discover saved tools**. Status shows
+"Tool found · account unverified", "Configured tool not found", or "Server
+unavailable"; it never promotes discovery into account or publishing verification.
+Results are session-local and expire when the source revision changes. Only a
+separately authorized provider acceptance test can confirm account access.
+
 This is a **synthetic mapping example**, not a claim that this MCP tool exists:
 
 ```json

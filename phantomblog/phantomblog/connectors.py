@@ -36,6 +36,8 @@ def validate_connections(connections):
         caps = connection["capabilities"]
         if not isinstance(caps, dict) or not caps or set(caps) - CAPABILITIES:
             raise Invalid("Unsupported connection capability")
+        if 'message' in caps and connection['provider'] != 'phantomchat':
+            raise Invalid('Messaging requires a PhantomChat provider connection')
         for capability, spec in caps.items():
             if not isinstance(spec, dict) or set(spec) != {"tool", "arguments", "successField", "receiptField"}:
                 raise Invalid("Capability needs tool, arguments, successField and receiptField")
@@ -167,8 +169,10 @@ def connection_status(root, runner=None):
         state = "configured"
         try:
             description = runner.describe(c)
-            serialized = json.dumps(description)
-            if all(spec["tool"] in serialized for spec in c["capabilities"].values()):
+            if not isinstance(description, dict) or not isinstance(description.get('tools'), list):
+                raise ExternalFailure('Tool discovery returned an unexpected structure')
+            tools = {tool.get('name') for tool in description.get('tools', []) if isinstance(tool, dict) and isinstance(tool.get('name'), str)}
+            if all(spec["tool"] in tools for spec in c["capabilities"].values()):
                 state = "discovered"
             else:
                 state = "tool-not-discovered"

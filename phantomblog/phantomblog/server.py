@@ -11,7 +11,7 @@ import secrets
 import subprocess
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import core, connectors
+from . import core, connectors, review
 
 
 def token_from_reference(reference, persona):
@@ -112,7 +112,10 @@ def make_server(root, token, port=8787, runner=None, verifier=connectors.verify_
                 if path == "/api/proposal":
                     file = core.contained(root, ".phantomblog-proposal.json")
                     proposal = core.decode(file.read_bytes()) if file.exists() else None
-                    return self.send(200, {"proposal": proposal, "proposalHash": core.digest(core.encoded(proposal)) if proposal else None})
+                    if proposal and (not isinstance(proposal, dict) or not isinstance(proposal.get('model'), dict)):
+                        raise core.Invalid('Invalid proposal source')
+                    return self.send(200, {"proposal": proposal, "proposalHash": core.digest(core.encoded(proposal)) if proposal else None,
+                                           'reviewRevision': revision, 'changes': review.compare(model, proposal['model']) if proposal else []})
                 if path == "/api/template":
                     name = model["theme"].get("templateFile", "page.html")
                     file = core.contained(root / "templates", name, True)
@@ -201,6 +204,12 @@ def make_server(root, token, port=8787, runner=None, verifier=connectors.verify_
                     return self.send(200, core.build(root, data.get("mode", "build")))
                 if path == "/api/connections":
                     return self.send(200, {"connections": connectors.connection_status(root, runner)})
+                if path == '/api/connection-preview':
+                    connectors.validate_connections({data['id']: data['connection']})
+                    connection = data['connection']
+                    return self.send(200, {'mappingValid': True, 'accountVerified': False,
+                                           'provider': connection['provider'], 'server': connection['server'],
+                                           'persona': connection['persona'], 'capabilities': sorted(connection['capabilities'])})
                 if path == "/api/prepare":
                     plan = connectors.prepare(root, data["slug"], data["language"], data.get("deploy"), data.get("shares"))
                     pending[plan["approval"]] = plan
