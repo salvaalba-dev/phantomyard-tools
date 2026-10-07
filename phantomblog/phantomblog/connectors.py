@@ -14,7 +14,7 @@ from .core import Invalid, atomic, build, contained, decode, digest, encoded, lo
 
 PROVIDERS = ("facebook", "instagram", "linkedin", "x", "mastodon", "bluesky", "youtube", "pinterest", "tiktok", "phantomchat", "deployment", "custom")
 CAPABILITIES = {"deploy", "share", "message"}
-VARIABLES = {"url", "title", "text", "language", "slug", "revision", "idempotency_key", "output_dir", "manifest", "request", "image_url", "social_image_url", "image_file"}
+VARIABLES = {"url", "title", "text", "language", "slug", "revision", "content_hash", "idempotency_key", "output_dir", "manifest", "request", "image_url", "social_image_url", "image_file"}
 
 
 class ExternalFailure(RuntimeError):
@@ -297,6 +297,7 @@ def execute(root, plan, approval, runner=None, verifier=verify_live):
         article = next(a for a in model["articles"] if a["slug"] == plan["slug"])
         variables = {"url": plan["url"], "title": plan["title"], "text": plan["title"] + " " + plan["url"], "language": plan["language"], "slug": plan["slug"], "revision": plan["revision"], "output_dir": str((root / "public").resolve()), "manifest": str((root / "public" / "phantomblog-manifest.json").resolve()), "request": ""}
         variables.update(image_url=model["site"]["url"] + article["image"], social_image_url=model["site"]["url"] + article["socialImage"], image_file=str(contained(root / "public", article["image"], True)))
+        variables['content_hash'] = plan['contentHash']
         result = {"plan": plan, "deployment": None, "verification": None, "shares": {}, "errors": {}}
         if plan["deploy"]:
             key = digest(encoded(["deploy", plan["deploy"], plan["buildHash"]]))

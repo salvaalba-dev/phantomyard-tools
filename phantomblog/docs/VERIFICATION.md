@@ -13,7 +13,7 @@ node --check phantomblog/resources/dashboard.js
 bash -n install.sh
 ```
 
-The suite contains 58 tests covering catalogue/date/slug/category validation,
+The suite contains 59 tests covering catalogue/date/slug/category validation,
 language completeness, raster assets and uploads, escaped metadata, authored body
 HTML, scoped CSS, shared template validation, output ownership, invalid-input
 preservation, deterministic builds and read-only commands. It also checks legacy

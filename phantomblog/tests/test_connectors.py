@@ -60,6 +60,16 @@ class ConnectorTests(unittest.TestCase):
         connectors.execute(self.root,plan,plan['approval'],self.runner,lambda u,h:{'liveVerified':True})
         self.assertEqual(len(self.runner.calls),3)
 
+    def test_facebook_mapping_receives_exact_approved_html_hash(self):
+        self.model['connections']['facebook']['capabilities']['share']['arguments'] = {
+            'url': '${url}', 'message': '${title}', 'contentHash': '${content_hash}', 'idempotencyKey': '${idempotency_key}'}
+        self.write(); plan = self.plan()
+        connectors.execute(self.root, plan, plan['approval'], self.runner, self.verify)
+        args = self.runner.calls[1][2]
+        self.assertEqual(args['contentHash'], plan['contentHash'])
+        self.assertEqual(args['url'], plan['url'])
+        self.assertEqual(len(args['idempotencyKey']), 64)
+
     def test_no_share_before_live_confirmation(self):
         plan=self.plan()
         def failed(url,checksum):
