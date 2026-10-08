@@ -1,14 +1,19 @@
 """Configured MCP adapters. Credentials remain in Phantombot's vault."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
+from http.client import HTTPConnection, HTTPSConnection
 from string import Template
-from urllib.request import HTTPRedirectHandler, Request
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 from .core import Invalid, atomic, build, contained, decode, digest, encoded, load, lock, render, slug, article_url
 
@@ -212,16 +217,79 @@ class NoRedirect(HTTPRedirectHandler):
         raise ExternalFailure("Published URL redirected; check its configured canonical URL")
 
 
-def verify_live(url, expected_hash):
-    from urllib.request import build_opener
+def pinned(base, address, secure):
+    """A connection class that dials one pre-validated address only.
+
+    HTTPS keeps the URL hostname for SNI and certificate verification, so a
+    second DNS answer cannot move the request somewhere else. Proxies are off:
+    this fetch must show what the public internet sees.
+    """
+    class Pinned(base):
+        def connect(self):
+            self.sock = socket.create_connection((address, self.port), self.timeout, self.source_address)
+            if secure:
+                self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+    return Pinned
+
+
+class PinnedHTTPHandler(HTTPHandler):
+    def __init__(self, address):
+        super().__init__()
+        self.address = address
+
+    def http_open(self, req):
+        return self.do_open(pinned(HTTPConnection, self.address, False), req)
+
+
+class PinnedHTTPSHandler(HTTPSHandler):
+    def __init__(self, address):
+        super().__init__()
+        self.address = address
+
+    def https_open(self, req):
+        return self.do_open(pinned(HTTPSConnection, self.address, True), req)
+
+
+def verified_addresses(host, port, allow_loopback=False):
+    """Resolve once and refuse anything the caller must not reach.
+
+    A public page must resolve to globally routable addresses, so a private
+    destination is refused before any request exists; local verification accepts
+    loopback only, which is what the test fixture server uses.
+    """
     try:
-        with build_opener(NoRedirect()).open(Request(url, headers={"User-Agent": "PhantomBlog/0.1", "Cache-Control": "no-cache"}), timeout=20) as response:
+        addresses = [item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
+    except OSError as exc:
+        raise ExternalFailure("Published hostname did not resolve") from exc
+    if not addresses:
+        raise ExternalFailure("Published hostname did not resolve")
+    for address in addresses:
+        parsed = ipaddress.ip_address(address.split("%")[0])
+        if allow_loopback:
+            if not parsed.is_loopback:
+                raise ExternalFailure("Local verification requires a loopback address")
+        elif not parsed.is_global:
+            raise ExternalFailure("Published hostname resolved to a nonpublic address")
+    return addresses
+
+
+def verify_live(url, expected_hash):
+    parts = urlsplit(url)
+    local = parts.scheme == "http"
+    try:
+        address = verified_addresses(parts.hostname or "", parts.port or (80 if local else 443), local)[0]
+        # Dial the address that was just validated: a second resolution must not
+        # move this request somewhere else.
+        handler = PinnedHTTPHandler(address) if local else PinnedHTTPSHandler(address)
+        with build_opener(NoRedirect(), handler, ProxyHandler({})).open(Request(url, headers={"User-Agent": "PhantomBlog/0.1", "Cache-Control": "no-cache"}), timeout=20) as response:
             if response.status != 200 or "text/html" not in response.headers.get("Content-Type", ""):
                 raise ExternalFailure("Published URL is not an HTML page")
             data = response.read(5_000_001)
             if len(data) > 5_000_000 or digest(data) != expected_hash:
                 raise ExternalFailure("Published page does not match this generated revision; wait for deployment")
     except (OSError, ValueError) as exc:
+        if isinstance(exc, HTTPError):
+            exc.close()
         raise ExternalFailure("Could not confirm published URL") from exc
     return {"url": url, "contentHash": expected_hash, "liveVerified": True}
 

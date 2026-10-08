@@ -1,4 +1,5 @@
 from copy import deepcopy
+from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 import os
 import tempfile
@@ -177,6 +178,68 @@ class ConnectorTests(unittest.TestCase):
         binary.write_bytes(b'Synthetic path fixture; never execute')
         with patch.dict(os.environ, {'PHANTOMBLOG_PHANTOMBOT_EXECUTABLE': str(binary)}):
             self.assertEqual(connectors.Runner().executable, str(binary))
+
+    def test_lock_release_tolerates_a_removed_file(self):
+        with core.lock(self.root):
+            core.contained(self.root, '.phantomblog-lock').unlink()
+        self.assertFalse(core.contained(self.root, '.phantomblog-lock').exists())
+
+
+class LiveVerificationTests(unittest.TestCase):
+    def test_private_or_unresolved_hosts_are_refused_before_connecting(self):
+        for entries in ([], [(2, 1, 6, '', ('127.0.0.1', 443))], [(2, 1, 6, '', ('10.0.0.5', 443))]):
+            with self.subTest(entries=entries), patch('phantomblog.connectors.socket.getaddrinfo', return_value=entries), patch('phantomblog.connectors.build_opener') as opener:
+                with self.assertRaises(connectors.ExternalFailure):
+                    connectors.verify_live('https://example.com/blog-1.html', '0' * 64)
+                opener.assert_not_called()
+
+    def test_local_verification_accepts_loopback_only(self):
+        with patch('phantomblog.connectors.socket.getaddrinfo', return_value=[(2, 1, 6, '', ('127.0.0.1', 80))]):
+            self.assertEqual(connectors.verified_addresses('localhost', 80, True), ['127.0.0.1'])
+        with patch('phantomblog.connectors.socket.getaddrinfo', return_value=[(2, 1, 6, '', ('93.184.216.34', 80))]):
+            with self.assertRaises(connectors.ExternalFailure):
+                connectors.verified_addresses('public.example', 80, True)
+
+    def test_live_verification_dials_the_validated_address(self):
+        body = b'<html>fixture</html>'
+
+        class Response:
+            status = 200
+            headers = {'Content-Type': 'text/html; charset=utf-8'}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, size=-1):
+                return body
+
+        opener = unittest.mock.Mock()
+        opener.open.return_value = Response()
+        with patch('phantomblog.connectors.socket.getaddrinfo', return_value=[(2, 1, 6, '', ('93.184.216.34', 443))]), patch('phantomblog.connectors.build_opener', return_value=opener) as build:
+            result = connectors.verify_live('https://example.com/blog-1.html', core.digest(body))
+        handler = build.call_args.args[1]
+        self.assertIsInstance(handler, connectors.PinnedHTTPSHandler)
+        self.assertEqual(handler.address, '93.184.216.34')
+        self.assertTrue(result['liveVerified'])
+
+    def test_pinned_connection_dials_the_validated_address(self):
+        with patch('phantomblog.connectors.socket.create_connection') as create:
+            create.return_value = unittest.mock.Mock()
+            connection = connectors.pinned(HTTPConnection, '93.184.216.34', False)('example.com', 443)
+            connection.connect()
+            create.assert_called_once_with(('93.184.216.34', 443), connection.timeout, None)
+
+    def test_pinned_https_connection_keeps_the_hostname_for_tls(self):
+        with patch('phantomblog.connectors.socket.create_connection') as create:
+            create.return_value = unittest.mock.Mock()
+            connection = connectors.pinned(HTTPSConnection, '93.184.216.34', True)('example.com')
+            connection._context = unittest.mock.Mock()
+            connection.connect()
+            create.assert_called_once_with(('93.184.216.34', 443), connection.timeout, None)
+            connection._context.wrap_socket.assert_called_once_with(create.return_value, server_hostname='example.com')
 
 
 if __name__ == '__main__':

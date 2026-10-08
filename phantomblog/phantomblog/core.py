@@ -516,7 +516,7 @@ def lock(root):
         os.close(fd)
         yield
     finally:
-        path.unlink()
+        path.unlink(missing_ok=True)
 
 
 def load(root):
