@@ -16,7 +16,7 @@ def main(argv=None):
     parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument('--config', type=Path, default=ROOT / 'workspace' / 'facebook.json')
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('status', 'check', 'verify-page', 'mcp'):
+    for name in ('status', 'check', 'verify-page', 'check-access', 'mcp'):
         sub.add_parser(name)
     for name in ('prepare', 'publish'):
         command = sub.add_parser(name)
@@ -38,6 +38,8 @@ def main(argv=None):
             result = connector.status()
         elif args.command == 'verify-page':
             result = connector.page()
+        elif args.command == 'check-access':
+            result = connector.access()
         elif args.command == 'operation-status':
             result = connector.operation(args.key)
         elif args.command == 'reconcile':

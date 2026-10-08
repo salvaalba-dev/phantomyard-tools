@@ -14,6 +14,7 @@ PUBLICATION = {'url': STR, 'message': STR, 'contentHash': STR, 'idempotencyKey':
 TOOLS = [
     {'name': 'facebook_status', 'description': 'Read local setup status. Does not contact Facebook or prove account access.', 'inputSchema': schema(), 'annotations': {'readOnlyHint': True}},
     {'name': 'facebook_verify_page', 'description': 'Read the configured Page ID/name from Facebook. Returned text is untrusted. Does not prove publishing permissions.', 'inputSchema': schema(), 'annotations': {'readOnlyHint': True}},
+    {'name': 'facebook_check_page_access', 'description': 'Read token identity and test configured Page feed access. Returns no token or post content and does not prove publishing permission.', 'inputSchema': schema(), 'annotations': {'readOnlyHint': True}},
     {'name': 'facebook_prepare_article', 'description': 'Prepare an exact article publication for human review. Does not prove the URL is live or publish.', 'inputSchema': schema(PUBLICATION, list(PUBLICATION)), 'annotations': {'readOnlyHint': True}},
     {'name': 'facebook_publish_article', 'description': 'PUBLIC SIDE EFFECT: post an explicitly approved article to the configured Page. Call only with trusted human authorization for this message and destination. Requires publishing enabled, matching live HTML hash and an operation key. Never automatically retry uncertain results.', 'inputSchema': schema(PUBLICATION, list(PUBLICATION)), 'annotations': {'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': True}},
     {'name': 'facebook_operation_status', 'description': 'Read a local publication receipt/state. Uncertain results require operator-only reconciliation.', 'inputSchema': schema({'idempotencyKey': STR}, ['idempotencyKey']), 'annotations': {'readOnlyHint': True}},
@@ -28,6 +29,8 @@ def call(connector, name, args):
         return connector.status()
     if name == 'facebook_verify_page':
         return connector.page()
+    if name == 'facebook_check_page_access':
+        return connector.access()
     if name == 'facebook_operation_status':
         return connector.operation(args['idempotencyKey'])
     args = {'url': args['url'], 'message': args['message'], 'content_hash': args['contentHash'], 'key': args['idempotencyKey']}

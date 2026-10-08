@@ -40,8 +40,10 @@ operator reconciliation, MCP errors and execution from another working directory
    confirmed live article and reviewed message. Only then enable publishing.
 5. Confirm the resulting post in Facebook, including its title/image/link preview.
 
-No real token has been collected, no permissions granted, no permanent Facebook
+At the initial implementation checkpoint, no real token had been collected, no
+permissions granted, no permanent Facebook
 registration created and no public publication or upstream deployment performed.
+The subsequent account checks are recorded below.
 The optional local workspace contains incomplete, publishing-disabled setup only;
 it is ignored by Git. Existing PhantomBridge runtime/configuration is untouched.
 
@@ -50,3 +52,17 @@ prepare results do not create a second approval/security system. The CLI require
 a reviewed fingerprint; PhantomBlog uses its existing exact-plan review boundary.
 There is no exactly-once guarantee for remote API/disk failures. Both publishing
 ledgers require reconciliation after uncertain outcomes. See README for recovery.
+
+## Account diagnostic update: 2026-10-08
+
+- Connector suite: 31 tests, 30 passed, one Windows symlink fixture skipped.
+  New coverage checks read-only token identity/feed diagnostics and sanitization
+  of numeric provider error codes without leaking provider text or credentials.
+- The installed Phantombot registration with an explicit persona successfully invoked
+  `facebook_check_page_access` using its vault-injected credential. The token
+  acted as the configured Page, but feed access failed with
+  HTTP 400 / Meta code 10. This does not prove publishing permission.
+- Publishing remains disabled. An earlier human-approved publication attempt
+  has an uncertain local ledger result and has not been retried. No successful
+  public publication is claimed; reconciliation requires confirming the actual
+  remote outcome. Private configuration and ledgers remain ignored by Git.

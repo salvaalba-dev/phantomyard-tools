@@ -75,6 +75,7 @@ phantombot mcp add facebook-page --persona editorial --stdio --command C:\Python
 phantombot mcp describe facebook-page --persona editorial
 phantombot mcp call facebook-page facebook_status --persona editorial --args '{}'
 phantombot mcp call facebook-page facebook_verify_page --persona editorial --args '{}'
+phantombot mcp call facebook-page facebook_check_page_access --persona editorial --args '{}'
 ```
 
 Use the actual installed executable's absolute path if Phantombot is not on PATH.
@@ -86,6 +87,12 @@ our code never directly opens a vault or resolves a default persona.
 `facebook_verify_page` confirms ID/name readable through the token. It explicitly
 does **not** prove publishing permission. Account acceptance needs a separately
 authorized real test. Complete that verification before enabling publishing.
+
+`facebook_check_page_access` additionally checks whether the credential acts as the
+configured Page and whether its feed is readable. It returns no credential or post
+content, writes no files, and does not verify publication permission. Failed HTTP
+requests expose only the HTTP status and numeric Meta error codes; provider
+messages, trace identifiers and response bodies remain private.
 
 ## PhantomBlog connection
 

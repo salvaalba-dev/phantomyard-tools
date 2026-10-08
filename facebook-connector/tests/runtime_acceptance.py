@@ -47,8 +47,8 @@ def main():
             registered = True  # An interrupted add can have an unknown outcome.
             runtime(['add', server_id, '--stdio','--command',sys.executable,'--args',','.join(argv)])
             description = runtime(['describe',server_id])
-            assert all(name in description for name in ('facebook_status','facebook_verify_page','facebook_prepare_article','facebook_publish_article','facebook_operation_status'))
-            checks.append('five tools discovered through installed runtime')
+            assert all(name in description for name in ('facebook_status','facebook_verify_page','facebook_check_page_access','facebook_prepare_article','facebook_publish_article','facebook_operation_status'))
+            checks.append('six tools discovered through installed runtime')
             value = call('facebook_status')
             value = value.get('structuredContent') or json.loads(value['content'][0]['text'])
             assert value['publishingEnabled'] is False and value['accountVerified'] is False

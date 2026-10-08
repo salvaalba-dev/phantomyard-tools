@@ -136,7 +136,7 @@ class Graph:
         token = os.environ.get(config['tokenEnv'], '')
         if not token or len(token) > 20_000 or any(ord(c) < 33 for c in token):
             raise Invalid('Page token unavailable; inject it through Phantombot --env-secret')
-        if not re.fullmatch(r'[0-9_]+(?:/feed)?', endpoint):
+        if not re.fullmatch(r'(?:me|[0-9_]+)(?:/feed)?', endpoint):
             raise Invalid('Unsupported Graph endpoint')
         url = 'https://graph.facebook.com/' + config['apiVersion'] + '/' + endpoint
         parameters = parameters or {}
@@ -155,7 +155,20 @@ class Graph:
         except (HTTPError, URLError, OSError, Invalid) as exc:
             # Provider bodies, exception strings and request objects can contain secrets.
             if isinstance(exc, HTTPError):
-                exc.close()
+                details = 'HTTP ' + str(exc.code)
+                try:
+                    raw_error = exc.read(1_000_001)
+                    if len(raw_error) <= 1_000_000:
+                        error = decode(raw_error).get('error', {})
+                        for field in ('code', 'error_subcode'):
+                            number = error.get(field)
+                            if type(number) is int and 0 <= number <= 2_147_483_647:
+                                details += ', ' + field + ' ' + str(number)
+                except (Invalid, OSError, AttributeError, TypeError):
+                    pass
+                finally:
+                    exc.close()
+                raise ExternalFailure('Facebook request failed (' + details + '); inspect token permissions privately') from None
             raise ExternalFailure('Facebook request failed; check permissions, API version and token privately') from None
         if not isinstance(value, dict) or 'error' in value:
             raise ExternalFailure('Facebook rejected the operation; inspect account permissions privately')
@@ -221,6 +234,26 @@ class Connector:
     def page(self):
         config = load(self.path)
         return verify_page(config, self.graph_factory(config))
+
+    def access(self):
+        config = load(self.path)
+        graph = self.graph_factory(config)
+        page = verify_page(config, graph)
+        identity = graph.request('GET', 'me', {'fields': 'id'})
+        if not isinstance(identity.get('id'), str) or not re.fullmatch(r'[0-9]+', identity['id']):
+            raise ExternalFailure('Invalid token identity response')
+        result = {'ok': True, 'pageId': page['pageId'],
+                  'tokenActsAsPage': identity['id'] == config['pageId'],
+                  'feedReadable': False, 'publishingPermissionVerified': False}
+        try:
+            feed = graph.request('GET', config['pageId'] + '/feed', {'fields': 'id', 'limit': '1'})
+            if not isinstance(feed.get('data'), list):
+                raise ExternalFailure('Invalid Page feed response')
+            result['feedReadable'] = True
+        except ExternalFailure as exc:
+            result['ok'] = False
+            result['readError'] = str(exc)
+        return result
 
     def plan(self, **args):
         config = load(self.path)

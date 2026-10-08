@@ -65,6 +65,34 @@ class ConnectorTests(unittest.TestCase):
         self.assertIsNone(self.connector.operation(KEY)['operation'])
         self.assertEqual(before, self.files()); self.assertFalse(self.live_calls)
 
+    def test_access_check_is_readonly_and_distinguishes_user_tokens(self):
+        before = self.files()
+        def response(method, endpoint, parameters=None):
+            self.assertEqual(method, 'GET')
+            if endpoint == 'me': return {'id': '999999'}
+            if endpoint.endswith('/feed'): return {'data': []}
+            return {'id': PAGE, 'name': 'Fixture Page'}
+        with patch.object(self.graph, 'request', side_effect=response):
+            result = mcp.call(self.connector, 'facebook_check_page_access', {})
+        self.assertFalse(result['tokenActsAsPage'])
+        self.assertTrue(result['feedReadable'])
+        self.assertFalse(result['publishingPermissionVerified'])
+        self.assertEqual(before, self.files())
+
+    def test_access_check_reports_read_failure_without_posting(self):
+        before = self.files()
+        def response(method, endpoint, parameters=None):
+            self.assertEqual(method, 'GET')
+            if endpoint.endswith('/feed'): raise core.ExternalFailure('Facebook request failed (HTTP 400, code 10)')
+            return {'id': PAGE, 'name': 'Fixture Page'}
+        with patch.object(self.graph, 'request', side_effect=response):
+            result = self.connector.access()
+        self.assertTrue(result['tokenActsAsPage'])
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['feedReadable'])
+        self.assertIn('code 10', result['readError'])
+        self.assertEqual(before, self.files())
+
     def test_disabled_publication_has_no_external_calls_or_output(self):
         self.model['allowPublishing'] = False; core.atomic(self.path, self.model); before = self.files()
         with self.assertRaises(core.Invalid): self.publish()
@@ -162,7 +190,7 @@ class ConnectorTests(unittest.TestCase):
         with self.assertRaises(core.Invalid): self.publish()
         self.assertEqual(target.read_text(), 'preserve')
 
-    def test_mcp_has_five_tools_and_no_reconciliation_or_delete(self):
+    def test_mcp_has_six_tools_and_no_reconciliation_or_delete(self):
         source = io.StringIO('\n'.join(json.dumps(v) for v in [
             {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-03-26'}},
             {'jsonrpc':'2.0','method':'notifications/initialized'},
@@ -172,7 +200,7 @@ class ConnectorTests(unittest.TestCase):
         ]) + '\n')
         output = io.StringIO(); mcp.serve(self.connector, source, output)
         responses = [json.loads(line) for line in output.getvalue().splitlines()]
-        self.assertEqual(len(responses), 4); self.assertEqual(len(responses[1]['result']['tools']), 5)
+        self.assertEqual(len(responses), 4); self.assertEqual(len(responses[1]['result']['tools']), 6)
         self.assertIn('Página', responses[2]['result']['content'][0]['text'])
         self.assertTrue(responses[3]['result']['isError']); self.assertFalse(any(c[0]=='POST' for c in self.graph.calls))
 
@@ -221,6 +249,16 @@ class TransportTests(unittest.TestCase):
             with patch.dict(os.environ, {'FIXTURE_TOKEN':'synthetic-private-token'}), self.assertRaises(core.ExternalFailure) as exc:
                 core.Graph(config(), opener).request('GET', PAGE)
             self.assertNotIn('synthetic-private-token', str(exc.exception))
+
+    def test_http_diagnostics_allow_only_numeric_codes(self):
+        payload = {'error': {'code': 10, 'error_subcode': 42, 'message': 'synthetic-private-token', 'fbtrace_id': 'private-trace'}}
+        failure = HTTPError('https://x/?secret=synthetic-private-token', 400, 'private', {}, io.BytesIO(core.encoded(payload)))
+        opener = unittest.mock.Mock(); opener.open.side_effect = failure
+        with patch.dict(os.environ, {'FIXTURE_TOKEN': 'synthetic-private-token'}), self.assertRaises(core.ExternalFailure) as exc:
+            core.Graph(config(), opener).request('GET', PAGE)
+        self.assertIn('HTTP 400, code 10, error_subcode 42', str(exc.exception))
+        self.assertNotIn('synthetic-private-token', str(exc.exception))
+        self.assertNotIn('private-trace', str(exc.exception))
 
     def test_graph_errors_and_non_json_are_rejected(self):
         for payload in ({'error':{'message':'private'}}, [], {'id':'okay'}):
