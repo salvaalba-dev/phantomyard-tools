@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+from http.client import HTTPSConnection
 from pathlib import Path
 import subprocess
 import sys
@@ -227,6 +228,11 @@ class ConnectorTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(wrapper), '--config', str(self.path), 'publish', '--request', str(request), '--approve', 'wrong'], cwd=self.temp.name, capture_output=True, text=True)
         self.assertEqual(result.returncode, 2); self.assertFalse(self.connector.state_path.exists())
 
+    def test_lock_release_tolerates_a_removed_file(self):
+        with self.connector.lock():
+            self.connector.lock_path.unlink()
+        self.assertFalse(self.connector.lock_path.exists())
+
 
 class TransportTests(unittest.TestCase):
     def response(self, payload, status=200):
@@ -296,6 +302,25 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(core.verify_live('https://example.com/a',hashlib.sha256(body).hexdigest()))
             with self.assertRaises(core.ExternalFailure): core.verify_live('https://example.com/a',HASH)
         self.assertIsNone(core.NoRedirect().redirect_request(None,None,302,'',{},'https://evil.example'))
+
+    def test_live_verification_dials_the_validated_address(self):
+        body = b'<html>fixture</html>'; response = self.response({})
+        response.read.return_value = body; response.headers = {'Content-Type':'text/html'}
+        opener = unittest.mock.Mock(); opener.open.return_value = response
+        with patch('facebook_connector.core.socket.getaddrinfo', return_value=[(2,1,6,'',('93.184.216.34',443))]), patch('facebook_connector.core.build_opener', return_value=opener) as build:
+            self.assertTrue(core.verify_live('https://example.com/a', hashlib.sha256(body).hexdigest()))
+        handler = build.call_args.args[1]
+        self.assertIsInstance(handler, core.PinnedHTTPSHandler)
+        self.assertEqual(handler.address, '93.184.216.34')
+
+    def test_pinned_connection_dials_the_validated_address(self):
+        with patch('facebook_connector.core.socket.create_connection') as create:
+            create.return_value = unittest.mock.Mock()
+            connection = core.pinned(HTTPSConnection, '93.184.216.34', True)('example.com')
+            connection._context = unittest.mock.Mock()
+            connection.connect()
+            create.assert_called_once_with(('93.184.216.34', 443), connection.timeout, None)
+            connection._context.wrap_socket.assert_called_once_with(create.return_value, server_hostname='example.com')
 
 
 if __name__ == '__main__': unittest.main()

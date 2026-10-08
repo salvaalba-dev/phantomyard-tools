@@ -12,9 +12,10 @@ import re
 import socket
 import tempfile
 from contextlib import contextmanager
+from http.client import HTTPSConnection
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 
 class Invalid(ValueError):
@@ -124,6 +125,30 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def pinned(base, address, secure):
+    """A connection class that dials one pre-validated address only.
+
+    HTTPS keeps the URL hostname for SNI and certificate verification, so a
+    second DNS answer cannot move the request somewhere else. Proxies are off:
+    verification must show what the public internet sees.
+    """
+    class Pinned(base):
+        def connect(self):
+            self.sock = socket.create_connection((address, self.port), self.timeout, self.source_address)
+            if secure:
+                self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+    return Pinned
+
+
+class PinnedHTTPSHandler(HTTPSHandler):
+    def __init__(self, address):
+        super().__init__()
+        self.address = address
+
+    def https_open(self, req):
+        return self.do_open(pinned(HTTPSConnection, self.address, True), req)
+
+
 class Graph:
     def __init__(self, config, opener=None):
         self.config = config
@@ -186,10 +211,13 @@ def verify_page(config, graph):
 def verify_live(url, content_hash):
     host = urlsplit(url).hostname
     try:
-        addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-        if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        addresses = [item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)]
+        if not addresses or any(not ipaddress.ip_address(item.split('%')[0]).is_global for item in addresses):
             raise ExternalFailure('Article hostname resolved to a nonpublic address')
-        with build_opener(NoRedirect()).open(Request(url, headers={'User-Agent': 'PhantomFacebook/0.1', 'Cache-Control': 'no-cache'}), timeout=20) as response:
+        # Dial the address that was just validated: a second resolution must not
+        # move this request somewhere else.
+        opener = build_opener(NoRedirect(), PinnedHTTPSHandler(addresses[0]), ProxyHandler({}))
+        with opener.open(Request(url, headers={'User-Agent': 'PhantomFacebook/0.1', 'Cache-Control': 'no-cache'}), timeout=20) as response:
             if response.status != 200 or 'text/html' not in response.headers.get('Content-Type', '').lower():
                 raise ExternalFailure('Live article is not an HTML page')
             body = response.read(5_000_001)
@@ -271,7 +299,7 @@ class Connector:
             os.close(fd)
             yield
         finally:
-            self.lock_path.unlink()
+            self.lock_path.unlink(missing_ok=True)
 
     def state(self):
         safe_file(self.state_path)
