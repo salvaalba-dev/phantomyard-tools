@@ -113,3 +113,14 @@ error found during browser verification was corrected and rechecked.
 For a disposable review demonstration, run `python tests/preview.py --port 8791
 --proposal-demo` on one line from the tool directory. It never adds sample articles
 to a real workspace.
+
+## Hardening update: 2026-10-08
+
+- Live verification refuses a hostname that resolves to a nonpublic address and
+  dials the exact address it validated, keeping the URL hostname for TLS and
+  disabling proxies, so a second DNS answer cannot move the request. Local
+  fixture verification is restricted to loopback and HTTP errors are closed
+  instead of leaked.
+- Releasing the workspace lock tolerates a lock file that already disappeared,
+  instead of raising over the original error.
+- Suites: 65 tests OK. `compileall` and `node --check` are clean.

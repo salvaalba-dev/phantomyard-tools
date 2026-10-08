@@ -66,3 +66,10 @@ ledgers require reconciliation after uncertain outcomes. See README for recovery
   has an uncertain local ledger result and has not been retried. No successful
   public publication is claimed; reconciliation requires confirming the actual
   remote outcome. Private configuration and ledgers remain ignored by Git.
+
+## Hardening update: 2026-10-08
+
+- Live verification dials the address it validated instead of resolving again,
+  keeping the URL hostname for TLS and disabling proxies.
+- Releasing the connector lock tolerates a lock file that already disappeared.
+- Suites: 34 connector tests OK; 65 PhantomBlog tests OK.
