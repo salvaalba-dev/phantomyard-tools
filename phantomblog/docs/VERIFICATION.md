@@ -124,3 +124,54 @@ to a real workspace.
 - Releasing the workspace lock tolerates a lock file that already disappeared,
   instead of raising over the original error.
 - Suites: 65 tests OK. `compileall` and `node --check` are clean.
+
+## One-time access links: 2026-10-08
+
+Branch: `codex/phantomblog-access-links`, based on main commit `c8889cf`.
+No real identities, signing keys, tokens or access links were used in fixtures.
+No external messages, publication, deployment or Git push was performed.
+
+Implementation uses an explicit Nostr public-key allow-list and verified NIP-98
+requests, with coincurve/libsecp256k1 for BIP-340 verification. Issuance never
+returns the master token. Access codes are random, held as in-memory hashes,
+expire after 15 minutes, and are atomically consumed only after session creation.
+Host, Origin and Sec-Fetch-Site checks precede issuance/redemption. Both login
+paths and logout set HttpOnly, SameSite=Strict and Secure cookies.
+
+Checks ran from the component directory on Windows 11 and Python 3.12:
+
+- `python -m pytest tests -q`: **79 passed, one existing Windows symlink test
+  skipped**, plus 31 successful unittest subtests. A fresh owned `--basetemp`
+  directory was necessary because Windows denied access to pytest's shared temp
+  directory. All source/workspace fixtures are temporary.
+- New regressions include valid, expired, used and invalid codes; real Schnorr
+  signatures; allow-list, freshness, payload and URL binding; request replay;
+  foreign Host/Origin; concurrent redemption; failed session creation; query/log
+  exclusion; secure cookies; disabled issuance; missing verifier; CLI output.
+- Node.js executed the real dashboard script against a minimal browser surface
+  for successful and failed redemption. History cleanup occurred before fetch,
+  the code appeared only in the POST body, and the valid case opened the app.
+  JavaScript syntax validation passed. This is not an actual browser session.
+- `python -m ruff check phantomblog tests`: **36 existing findings** remain in
+  untouched files. Before this task there were 41 findings; touched modules were
+  cleaned up. The changed Python files pass Ruff without exclusions.
+- `python -m ruff format --check phantomblog tests`: **11 existing untouched
+  files** require formatting. All four changed/new Python files pass the check.
+- `python -m bandit -r phantomblog -q`: **five existing low-severity findings**
+  (B404/B603) on the pre-existing executable-only subprocess integration in
+  server.py/connectors.py. There are no medium/high findings or findings in the
+  new access layer. No baseline suppressions or security-check exclusions were
+  added to claim a clean full-component result.
+- `git diff --check` passed. CI now installs the dev extra and runs pytest so
+  the signature and dashboard regressions are collected.
+
+Full-component lint/format/security checks were run but are not claimed clean.
+Their existing findings are preserved to keep this authentication change scoped.
+
+Manual browser acceptance remains unverified because Codex's browser helper
+fails during Windows sandbox setup (reported upstream as openai/codex#52069).
+A browser must accept Secure cookies on the trusted loopback origin. PhantomChat
+requires a signer/adapter for NIP-98 requests; its chat UI alone is not sufficient.
+The local issuer does not expose the dashboard publicly or send links itself.
+Browser fragment/history/clipboard limits and leak recovery are documented in
+README; history cannot be guaranteed never to observe a pasted fragment.
