@@ -566,31 +566,32 @@ def test_check_infra_log_file(tmp_path: Path) -> None:
 
 def test_bridge_npub_never_in_allowed_npubs() -> None:
     """The bridge npub must NOT be added to allowed_npubs: that is a trust
-    grant (allowlisted senders skip the threat judge). PhantomMeet moves the
-    private relay first and registers the bridge npub in relay_npubs (the
+    grant (allowlisted senders skip the threat judge). PhantomMeet ensures the
+    private relay is present and registers the bridge npub in relay_npubs (the
     untrusted relay tier) instead."""
     data = {
         "relays": ["wss://public.relay", "ws://private.relay"],
         "allowed_npubs": ["npub1existing"],
     }
-    patched, relay_added, npub_added = _patch_phantomchat(
+    patched, relay_added, npub_added, allowed_removed = _patch_phantomchat(
         data, "ws://private.relay", "npub1bridge", include_bridge=True
     )
-    # private relay moved to front
-    assert patched["relays"][0] == "ws://private.relay"
-    # allowed_npubs untouched (bridge npub NOT added)
+    # private relay kept where it was: position is not asserted
+    assert patched["relays"] == ["wss://public.relay", "ws://private.relay"]
+    # allowed_npubs untouched (bridge npub was absent, nothing to evict)
     assert patched["allowed_npubs"] == ["npub1existing"]
     # bridge npub registered in the untrusted relay_npubs tier, not the allowlist
     assert patched["relay_npubs"] == ["npub1bridge"]
     # owned relay delta is None (relay was already present); npub delta set
     assert relay_added is None
     assert npub_added == "npub1bridge"
+    assert allowed_removed is None
 
 
 def test_patch_phantomchat_skips_bridge_when_excluded() -> None:
     """include_bridge=False leaves relay_npubs (and allowed_npubs) untouched."""
     data = {"relays": ["ws://private.relay"], "allowed_npubs": ["npub1existing"]}
-    patched, relay_added, npub_added = _patch_phantomchat(
+    patched, relay_added, npub_added, allowed_removed = _patch_phantomchat(
         data, "ws://private.relay", "npub1bridge", include_bridge=False
     )
     assert patched["relays"] == ["ws://private.relay"]
@@ -598,6 +599,7 @@ def test_patch_phantomchat_skips_bridge_when_excluded() -> None:
     assert patched["allowed_npubs"] == ["npub1existing"]
     assert relay_added is None
     assert npub_added is None
+    assert allowed_removed is None
 
 
 def test_patch_phantomchat_relay_npubs_is_idempotent() -> None:
@@ -607,12 +609,13 @@ def test_patch_phantomchat_relay_npubs_is_idempotent() -> None:
         "allowed_npubs": [],
         "relay_npubs": ["npub1bridge", "npub1other"],
     }
-    patched, relay_added, npub_added = _patch_phantomchat(
+    patched, relay_added, npub_added, allowed_removed = _patch_phantomchat(
         data, "ws://private.relay", "npub1bridge", include_bridge=True
     )
     assert patched["relay_npubs"] == ["npub1bridge", "npub1other"]
     assert npub_added is None
     assert relay_added is None
+    assert allowed_removed is None
 
 
 def test_patch_phantomchat_records_added_relay_delta() -> None:
@@ -620,15 +623,111 @@ def test_patch_phantomchat_records_added_relay_delta() -> None:
     owned delta records exactly that relay (and the bridge npub) for
     `pm unapply` to remove."""
     data = {"relays": ["wss://public.relay"], "allowed_npubs": []}
-    patched, relay_added, npub_added = _patch_phantomchat(
+    patched, relay_added, npub_added, allowed_removed = _patch_phantomchat(
         data, "ws://private.relay", "npub1bridge", include_bridge=True
     )
-    assert patched["relays"] == ["ws://private.relay", "wss://public.relay"]
+    assert patched["relays"] == ["wss://public.relay", "ws://private.relay"]
     assert relay_added == "ws://private.relay"
     assert npub_added == "npub1bridge"
     assert patched["relay_npubs"] == ["npub1bridge"]
-    # allowed_npubs still untouched
+    # allowed_npubs still untouched (bridge npub absent already)
     assert patched["allowed_npubs"] == []
+    assert allowed_removed is None
+
+
+def test_patch_phantomchat_evicts_bridge_from_allowed_npubs() -> None:
+    """A bridge npub left in ``allowed_npubs`` by a pre-``relay_npubs`` apply
+    (or a hand edit) is a trust grant and is EVICTED on the next apply: the
+    persona self-heals instead of needing a hand edit. The eviction is the
+    owned delta `pm unapply` restores."""
+    data = {
+        "relays": ["ws://private.relay"],
+        "allowed_npubs": ["npub1operator", "npub1bridge"],
+        "relay_npubs": ["npub1bridge"],
+    }
+    patched, relay_added, npub_added, allowed_removed = _patch_phantomchat(
+        data, "ws://private.relay", "npub1bridge", include_bridge=True
+    )
+    # operator npub stays; the bridge npub is gone from the allowlist
+    assert patched["allowed_npubs"] == ["npub1operator"]
+    # still registered in the untrusted tier (unchanged, already present)
+    assert patched["relay_npubs"] == ["npub1bridge"]
+    assert relay_added is None
+    assert npub_added is None
+    assert allowed_removed == "npub1bridge"
+
+
+def test_patch_phantomchat_evicts_bridge_when_allowlist_empties() -> None:
+    """Evicting the bridge npub leaves an explicit empty allowlist instead of
+    a dangling reference to a key that must not be a principal."""
+    data = {
+        "relays": ["ws://private.relay"],
+        "allowed_npubs": ["npub1bridge"],
+    }
+    patched, _, _, allowed_removed = _patch_phantomchat(
+        data, "ws://private.relay", "npub1bridge", include_bridge=True
+    )
+    assert patched["allowed_npubs"] == []
+    assert patched["relay_npubs"] == ["npub1bridge"]
+    assert allowed_removed == "npub1bridge"
+
+
+def test_apply_evicts_legacy_bridge_and_unapply_restores(
+    tmp_path: Path,
+) -> None:
+    """A legacy persona whose ``allowed_npubs`` still holds the bridge npub is
+    healed by `pm apply` (evicted) and `pm unapply` restores the pre-apply
+    allowlist, leaving the operator's own npubs untouched."""
+    import json
+
+    manifest = yaml.safe_load((EXAMPLES / "example-org.yaml").read_text())
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, allow_unicode=True), encoding="utf-8"
+    )
+    personas = tmp_path / "personas"
+    for pid in ("maria", "juan", "pedro", "lucia"):
+        (personas / pid).mkdir(parents=True, exist_ok=True)
+    maria = personas / "maria"
+    bridge_npub = manifest["bridge"]["npub"]
+    # legacy state: bridge npub both in allowed_npubs (pre-fix) and relay_npubs
+    (maria / "phantomchat.json").write_text(
+        json.dumps(
+            {
+                "relays": ["wss://public.relay"],
+                "allowed_npubs": ["npub1operator", bridge_npub],
+                "relay_npubs": [bridge_npub],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proc = run_cli(
+        "apply",
+        "--manifest",
+        str(manifest_path),
+        "--target",
+        str(personas),
+        "--invite-roles",
+        "maria",
+    )
+    assert proc.returncode == 0, proc.stderr
+    healed = json.loads((maria / "phantomchat.json").read_text(encoding="utf-8"))
+    assert healed["allowed_npubs"] == ["npub1operator"]
+    assert bridge_npub not in healed["allowed_npubs"]
+    assert healed["relay_npubs"] == [bridge_npub]
+    delta = json.loads(
+        (maria / ".phantommeet-phantomchat.delta.json").read_text(encoding="utf-8")
+    )
+    assert delta["allowed_removed"] == bridge_npub
+
+    # unapply restores the exact pre-apply allowlist (bridge npub back).
+    proc = run_cli(
+        "unapply", "--manifest", str(manifest_path), "--target", str(personas)
+    )
+    assert proc.returncode == 0, proc.stderr
+    restored = json.loads((maria / "phantomchat.json").read_text(encoding="utf-8"))
+    assert restored["allowed_npubs"] == ["npub1operator", bridge_npub]
 
 
 def test_contained_dest_refuses_path_escape() -> None:
@@ -780,7 +879,10 @@ def test_unapply_reverses_phantomchat_relay(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     applied = json.loads((maria / "phantomchat.json").read_text(encoding="utf-8"))
-    assert applied["relays"][0] == "ws://relay.example.invalid:7777"
+    assert applied["relays"] == [
+        "wss://public.relay",
+        "ws://relay.example.invalid:7777",
+    ]
     # bridge npub registered in relay_npubs, not in allowed_npubs
     bridge_npub = manifest["bridge"]["npub"]
     assert applied["relay_npubs"] == [bridge_npub]
@@ -856,14 +958,14 @@ def test_apply_relay_delta_survives_reorder(tmp_path: Path) -> None:
     assert delta1["relay_added"] == relay
     assert delta1["npub_added"] == bridge_npub
 
-    # Operator moves the relay down (still present, just not first).
+    # Operator moves the relay up (still present, now not last).
     data = json.loads((maria / "phantomchat.json").read_text(encoding="utf-8"))
-    assert data["relays"][0] == relay
-    data["relays"] = [r for r in data["relays"] if r != relay] + [relay]
+    assert data["relays"][-1] == relay
+    data["relays"] = [relay] + [r for r in data["relays"] if r != relay]
     (maria / "phantomchat.json").write_text(json.dumps(data), encoding="utf-8")
 
-    # Apply #2: relay present → reorder only (relay_added None), but the delta
-    # must be PRESERVED so `pm unapply` can still reverse it.
+    # Apply #2: relay present → left in place (no reorder at all), but the
+    # delta must be PRESERVED so `pm unapply` can still reverse it.
     proc = run_cli(
         "apply",
         "--manifest",
