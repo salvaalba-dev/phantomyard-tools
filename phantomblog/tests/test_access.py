@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -27,9 +28,9 @@ def dashboard(tmp_path):
     identity = key.public_key_xonly.format().hex()
     now = [1000.0, 1700000000]
     links = access.AccessLinks([identity], lambda: now[0], lambda: now[1])
-    token = "synthetic-admin-only-server-fixture"
+    reserved = None  # Reserved fixture slot; no dashboard credential exists.
     with patch.object(server.access, "AccessLinks", return_value=links):
-        httpd = server.make_server(tmp_path, token, 0, access_identities=[identity])
+        httpd = server.make_server(tmp_path, 0, access_identities=[identity])
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{httpd.server_port}"
@@ -85,10 +86,9 @@ def dashboard(tmp_path):
         url = json.loads(body)["link"]
         parsed = urlsplit(url)
         assert parsed.path == "/" and not parsed.query
-        assert token not in url
         return parse_qs(parsed.fragment)["c"][0], url
 
-    yield links, now, signed, request, issue, code, token, httpd, tmp_path
+    yield links, now, signed, request, issue, code, reserved, httpd, tmp_path
     httpd.shutdown()
     httpd.server_close()
     thread.join(timeout=3)
@@ -114,8 +114,50 @@ def test_valid_link_authenticates_with_existing_session(dashboard):
 def test_expired_link(dashboard):
     _, now, _, request, _, code, _, _, _ = dashboard
     value, _ = code()
-    now[0] += access.LIFETIME
+    assert access.LIFETIME == 300
+    now[0] += 300
     assert request("/api/redeem", {"code": value})[0] == 401
+
+
+def test_link_is_valid_until_five_minute_boundary(dashboard):
+    _, now, _, request, _, code, _, _, _ = dashboard
+    value, _ = code()
+    now[0] += 299
+    assert request("/api/redeem", {"code": value})[0] == 200
+
+
+def test_empty_allowlist_server_cannot_create_sessions(tmp_path):
+    create(tmp_path)
+    with patch.dict("sys.modules", {"coincurve": None}):
+        httpd = server.make_server(tmp_path, 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for path, body in (
+            ("/api/access-link", {}),
+            ("/api/redeem", {"code": "a" * 43}),
+            ("/api/login", {"token": os.urandom(32).hex()}),
+        ):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_port, timeout=5
+            )
+            try:
+                connection.request(
+                    "POST",
+                    path,
+                    json.dumps(body, separators=(",", ":")),
+                    {"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                assert response.status == 401
+                assert response.getheader("Set-Cookie") is None
+                response.read()
+            finally:
+                connection.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
 
 
 def test_used_and_invalid_links(dashboard):
@@ -148,7 +190,7 @@ def test_foreign_origin_and_host_cannot_issue_or_consume(dashboard):
 
 
 def test_signature_allowlist_freshness_binding_and_replay(dashboard):
-    _, now, signed, _, issue, _, token, _, _ = dashboard
+    _, now, signed, _, issue, _, _, _, _ = dashboard
     event = signed()
     assert issue(event)[0] == 200
     assert issue(event)[0] == 401
@@ -172,11 +214,14 @@ def test_signature_allowlist_freshness_binding_and_replay(dashboard):
     bad = signed()
     bad["id"] = "0" * 64
     assert issue(bad)[0] == 401
-    assert issue(headers={"Authorization": "Bearer " + token})[0] == 401
+    assert (
+        issue(headers={"Authorization": "Bearer " + PrivateKey().secret.hex()})[0]
+        == 401
+    )
 
 
 def test_credentials_never_in_query_response_or_logs(dashboard, capsys):
-    _, _, _, request, _, code, token, _, _ = dashboard
+    _, _, _, request, _, code, _, _, _ = dashboard
     value, url = code()
     assert "#c=" in url and "?c=" not in url
     status, body, _ = request("/api/redeem?c=" + value, {"code": value})
@@ -185,7 +230,6 @@ def test_credentials_never_in_query_response_or_logs(dashboard, capsys):
     assert request("/api/access-link?c=" + value, {})[0] == 400
     output = capsys.readouterr()
     assert value not in output.out + output.err
-    assert token not in output.out + output.err
     assert value.encode() not in request("/dashboard.js")[1]
 
 
@@ -213,7 +257,7 @@ def test_failed_session_creation_does_not_consume_code(dashboard):
 
 
 def test_cli_outputs_one_line_without_admin_token(dashboard, capsys, tmp_path):
-    _, _, signed, _, _, _, token, httpd, _ = dashboard
+    _, _, signed, _, _, _, _, httpd, _ = dashboard
     event = tmp_path / "signed-event.json"
     event.write_bytes(core.encoded(signed()))
     assert (
@@ -231,7 +275,6 @@ def test_cli_outputs_one_line_without_admin_token(dashboard, capsys, tmp_path):
     output = capsys.readouterr().out
     assert len(output.splitlines()) == 1
     assert output.startswith(f"http://127.0.0.1:{httpd.server_port}/#c=")
-    assert token not in output
 
 
 def test_no_allowlist_fails_closed_and_restart_invalidates(dashboard):
@@ -274,11 +317,17 @@ def test_dashboard_fragment_bootstrap_executes():
     )
 
 
-def test_existing_admin_login_also_keeps_secure_cookie(dashboard):
-    _, _, _, request, _, _, token, _, _ = dashboard
-    status, _, headers = request("/api/login", {"token": token})
-    assert status == 200
-    assert "Secure" in headers["Set-Cookie"]
+def test_static_credentials_cannot_authenticate(dashboard):
+    _, _, _, request, _, _, _, _, _ = dashboard
+    credential = PrivateKey().secret.hex()
+    assert request("/api/login", {"token": credential})[0] == 401
+    assert (
+        request("/api/state", headers={"Authorization": "Bearer " + credential})[0]
+        == 401
+    )
+    with pytest.raises(SystemExit):
+        cli.main(["dashboard", "--token-ref", "env:REMOVED"])
+    assert not hasattr(server, "token_from_reference")
 
 
 def test_signed_payload_must_match_exact_request_bytes(dashboard):
@@ -313,3 +362,249 @@ def test_malformed_authorization_and_missing_allowlist_dependency(dashboard):
         pytest.raises(core.Invalid, match="Install phantomblog"),
     ):
         access.AccessLinks(["a" * 64])
+
+
+def encode_nsec(secret):
+    """Synthetic NIP-19 fixture encoder, independent of production decoder."""
+    alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+    number = int.from_bytes(secret, "big") << 4
+    digits = [(number >> (5 * i)) & 31 for i in reversed(range(52))]
+    expanded = [ord(c) >> 5 for c in "nsec"] + [0] + [ord(c) & 31 for c in "nsec"]
+    checksum = 1
+    for digit in expanded + digits + [0] * 6:
+        top = checksum >> 25
+        checksum = ((checksum & 0x1FFFFFF) << 5) ^ digit
+        for bit, generator in enumerate(
+            (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+        ):
+            if (top >> bit) & 1:
+                checksum ^= generator
+    checksum ^= 1
+    return "nsec1" + "".join(
+        alphabet[d]
+        for d in digits + [(checksum >> (5 * i)) & 31 for i in reversed(range(6))]
+    )
+
+
+@pytest.mark.parametrize("encoding", ["hex", "nsec"])
+def test_persona_cli_signs_and_preserves_disposable_store(tmp_path, capsys, encoding):
+    key = PrivateKey()
+    store = tmp_path / "private-personas"
+    persona = "fixture-" + os.urandom(8).hex()
+    identity = store / persona / "identity.json"
+    identity.parent.mkdir(parents=True)
+    secret = key.secret.hex() if encoding == "hex" else encode_nsec(key.secret)
+    identity.write_bytes(core.encoded({"nsec": secret}))
+    workspace = tmp_path / "publication"
+    workspace.mkdir()
+    create(workspace)
+    before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
+    httpd = server.make_server(
+        workspace, 0, access_identities=[key.public_key_xonly.format().hex()]
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for _ in range(2):  # Fresh nonce permits two requests within the same second.
+            assert (
+                cli.main(
+                    [
+                        "access-link",
+                        "--persona",
+                        persona,
+                        "--persona-dir",
+                        str(store),
+                        "--port",
+                        str(httpd.server_port),
+                    ]
+                )
+                == 0
+            )
+            output = capsys.readouterr()
+            link = output.out.strip()
+            assert len(output.out.splitlines()) == 1 and not output.err
+            assert secret not in output.out and key.secret.hex() not in output.out
+            assert re.fullmatch(
+                r"/#c=[A-Za-z0-9_-]{43}",
+                urlsplit(link).path + "#" + urlsplit(link).fragment,
+            )
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_port, timeout=5
+            )
+            try:
+                connection.request(
+                    "POST",
+                    "/api/redeem",
+                    core.encoded({"code": link.split("#c=")[1]}),
+                    {"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                assert response.status == 200
+                response.read()
+                assert "Secure" in response.getheader("Set-Cookie")
+            finally:
+                connection.close()
+        assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
+        assert not (workspace / "public").exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_persona_errors_are_private_and_dependency_is_optional(tmp_path, capsys):
+    key = PrivateKey()
+    path = tmp_path / "fixture" / "identity.json"
+    path.parent.mkdir()
+    path.write_bytes(core.encoded({"nsec": key.secret.hex() + "invalid"}))
+    assert (
+        cli.main(
+            ["access-link", "--persona", "fixture", "--persona-dir", str(tmp_path)]
+        )
+        == 2
+    )
+    output = capsys.readouterr()
+    assert key.secret.hex() not in output.err and not output.out
+    for persona in ("../fixture", "", "other"):
+        with pytest.raises(core.Invalid):
+            access.persona_event(persona, tmp_path, 8787)
+    with patch.dict(os.environ, {"PHANTOMBLOG_PERSONA_DIR": str(tmp_path)}):
+        path.write_bytes(core.encoded({"nsec": key.secret.hex()}))
+        assert (
+            access.persona_event("fixture", None, 8787)["pubkey"]
+            == key.public_key_xonly.format().hex()
+        )
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(core.Invalid, match="persona-dir"),
+    ):
+        access.persona_event("fixture", None, 8787)
+    with patch.dict("sys.modules", {"coincurve": None}):
+        access.AccessLinks()  # Disabled issuance needs no cryptographic dependency.
+        with pytest.raises(core.Invalid, match="phantomblog\\[access\\]"):
+            access.persona_event("fixture", tmp_path, 8787)
+
+
+def test_nsec_checksum_padding_and_invalid_scalars(tmp_path):
+    key = PrivateKey()
+    encoded = encode_nsec(key.secret)
+    assert access._secret_bytes(encoded) == key.secret
+    for value in (
+        encoded[:-1] + ("q" if encoded[-1] != "q" else "p"),
+        encoded.upper(),
+        "npub" + encoded[4:],
+        encoded + "q",
+        None,
+    ):
+        with pytest.raises((ValueError, TypeError)):
+            access._secret_bytes(value)
+    path = tmp_path / "fixture" / "identity.json"
+    path.parent.mkdir()
+    path.write_bytes(core.encoded({"nsec": "0" * 64}))
+    with pytest.raises(core.Invalid, match="invalid"):
+        access.persona_event("fixture", tmp_path, 8787)
+
+
+def test_configurable_origin_delivery_and_exact_browser_boundary(tmp_path, capsys):
+    create(tmp_path)
+    key = PrivateKey()
+    origin = "https://" + os.urandom(8).hex() + ".invalid:9443"
+    httpd = server.make_server(
+        tmp_path,
+        0,
+        access_identities=[key.public_key_xonly.format().hex()],
+        public_origin=origin,
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        store = tmp_path / "personas"
+        path = store / "fixture" / "identity.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(core.encoded({"nsec": key.secret.hex()}))
+        event = access.persona_event("fixture", store, httpd.server_port)
+        link = access.request_link(event, httpd.server_port, origin)
+        assert link.startswith(origin + "/#c=") and not urlsplit(link).query
+        assert (
+            cli.main(
+                [
+                    "access-link",
+                    "--persona",
+                    "fixture",
+                    "--persona-dir",
+                    str(store),
+                    "--port",
+                    str(httpd.server_port),
+                    "--public-origin",
+                    origin,
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr()
+        assert len(output.out.splitlines()) == 1 and output.out.startswith(
+            origin + "/#c="
+        )
+        assert key.secret.hex() not in output.out + output.err
+        assert httpd.server_address[0] == "127.0.0.1"
+        code = link.split("#c=")[1]
+        for browser_origin, status in (("https://foreign.invalid", 403), (origin, 200)):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_port, timeout=5
+            )
+            try:
+                connection.request(
+                    "POST",
+                    "/api/redeem",
+                    core.encoded({"code": code}),
+                    {
+                        "Host": urlsplit(origin).netloc,
+                        "Origin": browser_origin,
+                        "Content-Type": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                assert response.status == status
+                response.read()
+            finally:
+                connection.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://user:password@fixture.invalid",
+        "https://fixture.invalid/path",
+        "https://fixture.invalid?c=x",
+        "https://fixture.invalid#c=x",
+        "http://fixture.invalid",
+        "https://fixture.invalid:0",
+        "https://fixture.invalid\n",
+        "https://fixture.invalid\\evil",
+    ],
+)
+def test_unsafe_delivery_origin_refused(value):
+    with pytest.raises(core.Invalid):
+        access.public_origin(value, 8787)
+
+
+def test_no_instance_keys_in_tracked_component_sources():
+    root = Path(__file__).resolve().parents[1]
+    files = [
+        *root.glob("*.md"),
+        *root.glob("docs/*.md"),
+        *root.glob("phantomblog/*.py"),
+        *root.glob("tests/*.py"),
+        *root.glob("phantomblog/resources/*"),
+        root / "pyproject.toml",
+    ]
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"\b(?:nsec|npub)1[a-z0-9]{58}\b", text), path
+        assert not re.search(r"(?<![a-fA-F0-9])[a-fA-F0-9]{64}(?![a-fA-F0-9])", text), (
+            path
+        )

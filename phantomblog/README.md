@@ -5,10 +5,6 @@ workflow. Python 3.11+, standard library for builds and the original dashboard; 
 use an optional Schnorr verification dependency. Public websites receive
 HTML, CSS and image files; they need no Python service or new build step.
 
-Development home: `salvaalba-dev/phantomyard-tools/phantomblog`. A future upstream
-submission to `phantomyard/phantomtools` is a separate human decision. No runtime
-behaviour, installer or generated URL depends on the GitHub owner name.
-
 ## What works in v0.1
 
 - Articles, bilingual categories, dates, drafts, featured styling and image uploads.
@@ -50,22 +46,9 @@ are resolved from the caller. Every content/asset/output path is resolved from
 that workspace. On Windows use `python bin\phantomblog` or `bin\phantomblog.cmd`.
 No package installation is required. `pip install .` is optional.
 
-Set an administrator token through your process manager or Phantombot vault.
-For a standalone development session, inject a random token into
-`PHANTOMBLOG_ADMIN_TOKEN` without saving it in the repo. Then:
-
-```sh
-python bin/phantomblog --root /absolute/path/to/my-blog dashboard
-# Or resolve it through the existing persona vault:
-python bin/phantomblog --root /absolute/path/to/my-blog dashboard \
-  --token-ref vault:PHANTOMBLOG_ADMIN_TOKEN --persona editorial
-```
-
-The master token stays in the dashboard process; request a one-time access link
-as described below. The service binds only
-to loopback and checks authentication, Host and Origin. For remote access use an
-authenticated tunnel retaining that URL; exposing this HTTP listener is not a
-supported production setup. Tokens never go in URLs or browser storage.
+Dashboard entry uses only signed, short-lived links; see the access section below.
+There is no static administrator credential, token reference, web login form or
+Bearer authentication. The service binds only to loopback.
 
 ## Authoring and integration
 
@@ -89,103 +72,103 @@ Linux/macOS: `./install.sh` symlinks the reviewed checkout's wrapper into
 copies. Windows: add this tool's `bin` folder to PATH through system settings.
 
 ```sh
-python -m unittest discover -s tests -v
+python -m pip install ".[dev]"
+python -m pytest tests -v
 node --check phantomblog/resources/dashboard.js
 python tests/preview.py --port 8790
 ```
 
 The preview creates a disposable test workspace with clearly labelled synthetic
-articles, images and a synthetic login token declared in `tests/preview.py`.
+articles, images and an ephemeral signing identity. Its printed link lasts five minutes.
 It performs no deployments or messages. Stop it with Ctrl+C. Fixtures are never
 installed into a real publication.
 
 MIT. See [LICENSE](LICENSE).
 
-## One-time dashboard access (PhantomChat identities)
+## Signed dashboard access
 
-Install the optional signature verifier with `python -m pip install ".[access]"`.
-Start the dashboard with an explicit allow-list of lowercase, 64-character hex
-Nostr public keys belonging to the humans allowed to request access:
-
-```sh
-python bin/phantomblog --root /absolute/path/to/my-blog dashboard \
-  --allow-identity <human-public-key-hex> \
-  --allow-identity <another-human-public-key-hex>
-```
-
-The administrator token is still resolved on the server from the configured
-environment or vault reference. It is not returned, used in a link, or required
-by the requesting human. No allow-list means issuance is disabled. Display names,
-NIP-05 aliases, text claiming to be a person, and relay/bot identities do not grant
-access. Each allowed public key must sign its own request.
-
-A configured PhantomChat/Phantombot adapter requests a link on the human's behalf
-using that human's signed [NIP-98 HTTP authorization](https://github.com/nostr-protocol/nips/blob/master/98.md).
-Use a kind `27235` event with empty content, a current integer `created_at`, and
-exactly one of each required tag:
-
-```json
-[
-  ["u", "http://127.0.0.1:8787/api/access-link"],
-  ["method", "POST"],
-  ["payload", "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"]
-]
-```
-
-The payload hash is SHA-256 of the exact request bytes `{}`. The event ID is the
-NIP-01 canonical hash; the signature is BIP-340 Schnorr. Send the base64-encoded
-complete signed event in `Authorization: Nostr <base64-event>` with
-`POST /api/access-link`, `Content-Type: application/json`, and body `{}`.
-Signatures must be within 60 seconds of server time; a signed request can only be
-used once. It is bound to the exact URL, method and body. Never give the adapter
-an `nsec`, private key or the master dashboard token.
-
-Alternatively, submit the already-signed event from a file using the CLI:
+Install `python -m pip install ".[access]"` for coincurve BIP-340 signing and
+verification. Builds remain standard-library only. Configure authorized public
+keys exclusively at runtime with repeatable `--allow-identity <64-hex-pubkey>`.
+No identities are bundled. An empty allowlist refuses all issuance and login;
+without an allowlist the cryptographic extra is not loaded. A configured
+allowlist without the extra produces a clear installation error.
 
 ```sh
-python bin/phantomblog access-link --port 8787 --signed-event /private/request.json
+python bin/phantomblog --root <publication-workspace> dashboard \
+  --allow-identity <authorized-public-key-hex>
+python bin/phantomblog access-link --persona <persona-id> \
+  --persona-dir <private-persona-store>
 ```
 
-It prints one line, `http://127.0.0.1:8787/#c=<one-time-code>`. Deliver that link
-privately to the requesting human; never broadcast it on a Nostr relay. PhantomChat
-uses Nostr identities, but its current chat UI does not itself sign NIP-98 HTTP
-requests: an adapter with access to the human's approved signer is required.
-This change does not install a relay listener or automatically send a message.
+The store contains `<persona-id>/identity.json` with the runtime-owned `nsec`
+field (NIP-19 nsec or 32-byte hex). `--persona-dir` names the **parent store**,
+not an individual persona directory. Alternatively set `PHANTOMBLOG_PERSONA_DIR`
+to that store. There is no guessed/default persona or store. The tool reads only
+the selected identity, never creates or rewrites persona state, and never logs or
+prints the key. Any persona id using letters, digits, underscores or hyphens is
+supported; its derived public key must be explicitly authorized on the server.
+Keep the store outside the public repository and restrict its filesystem access.
+Python cannot guarantee immediate erasure of secret bytes from process memory.
 
-Paste the link into a browser with access to the local dashboard. The browser
-immediately removes the fragment with `history.replaceState`, submits the code
-in a JSON POST, and enters the existing authenticated dashboard. The cookie is
-HttpOnly, SameSite=Strict and Secure, including logout. Use a browser that accepts
-Secure cookies on trusted loopback HTTP; do not remove Secure to accommodate a
-browser that refuses them. Host and Origin checks and the loopback-only bind are
-unchanged. Remote clients need an authenticated tunnel retaining this exact
-loopback origin; a remote client cannot reach this machine's loopback by simply
-opening the link. Public HTTPS hosting is not added by this feature.
+The command signs a fresh NIP-98 kind 27235 event at runtime, sends it to the
+loopback issuer, and prints one link. `--port` must match the dashboard port.
+A random nonce allows independent requests within the same second. Alternatively,
+`access-link --signed-event <private-event-file>` submits an already signed event;
+`--signed-event` and `--persona` are mutually exclusive. No secret goes in argv.
+The command does not send a message or broadcast anything on a relay.
 
-Links expire after 15 minutes and are consumed only by a successful login. They
-are bearer credentials: anyone with the link can use it first. Codes are stored
-only as in-memory hashes, never in source files, browser storage or server logs.
-The fragment is not sent in the page request or HTTP Referer; JavaScript erases
-it before API calls. Browsers, clipboard managers, extensions or history sync
-can still capture a pasted URL before JavaScript runs, so a blanket guarantee of
-no browser-history exposure is impossible. Do not put links in shared history.
+NIP-98 requires empty content, integer `created_at` within 60 seconds, a canonical
+NIP-01 event id, and a real BIP-340 signature. Required tags are `u` (exact issuance
+origin plus `/api/access-link`), `method` (`POST`), and `payload` (SHA-256 of the
+exact body bytes `{}`). Send `Authorization: Nostr <base64-signed-event>` and
+`Content-Type: application/json`. Event-id replay is refused. Display names,
+chat text and relay identities cannot authorize access. The persona CLI signs
+the local issuance URL; remote signed requests must bind the configured public URL.
 
-If a link leaks, restart the dashboard to invalidate all outstanding links and
-sessions, then request a new link. If an identity is compromised, remove its
-public key from the allow-list before restarting. Restarting never revives a
-consumed code. Keep signed events and access links out of Git and application logs.
+### Public delivery origin
 
-Development checks for this component (install `.[dev]` first):
+By default the link is `http://127.0.0.1:<port>/#c=<code>`. To deliver an HTTPS URL,
+configure the same `--public-origin <https-origin>` on **both** dashboard and
+access-link commands. This is an origin only: no path, userinfo, query or fragment.
+HTTP delivery is restricted to loopback. No instance host is bundled.
+
+The server still binds to `127.0.0.1`; this flag does not install TLS, a proxy or
+DNS. Supply a trusted HTTPS reverse proxy/tunnel that forwards the configured
+Host unchanged, retains the browser Origin, and reaches the loopback listener.
+The server accepts only its loopback origin and the explicitly configured public
+origin, with matching Host and same-origin fetch metadata. Foreign Origins remain
+403; forwarded-origin headers are never trusted. Configure the proxy to avoid
+logging authorization headers, redemption bodies and issued link responses.
+No external deployment is performed by these commands.
+
+### Browser entry and leaked links
+
+Links last **five minutes** and work once. The only way to create a session is
+`/#c=<43-character-code>` followed by the browser's JSON POST to `/api/redeem`.
+Issuance stores only in-memory hashes and redemption is atomic, consuming the
+code only after session creation succeeds. There is no `/api/login` route or
+Bearer fallback. Sessions use HttpOnly, SameSite=Strict, Secure cookies; existing
+sessions remain usable until logout or server restart. Secure loopback cookie
+support depends on the browser; do not drop Secure to work around it.
+
+The code is delivered only in the URL fragment, never the path or query. The
+browser clears it with `history.replaceState` before any API request and keeps no
+browser-storage copy. Fragments are excluded from HTTP page requests and Referer,
+but pasted URLs may be captured by browser history sync, extensions or clipboard
+managers before JavaScript runs. Do not promise zero history exposure.
+
+Anyone holding an unused link can redeem it. If it leaks, restart the dashboard
+to invalidate all outstanding links and sessions, then request a fresh link.
+Remove a compromised identity from runtime flags before restarting. Never commit
+keys, signed events or access links. Only explicitly allowlisted identities may
+request links; human review still controls publication and sharing.
+
+Development checks (install `.[dev]` first):
 
 ```sh
 python -m ruff check phantomblog tests
 python -m ruff format --check phantomblog tests
 python -m bandit -r phantomblog -q
-python -m pytest tests -q
+python -m pytest tests -v
 ```
-
-The JavaScript bootstrap regression uses Node.js when available; set
-`PHANTOMBLOG_TEST_NODE` to its executable path if it is not on PATH. Build and
-original dashboard functionality still work without the access extra. Signed
-access was verified on Python 3.12; some newer Python versions may lack a
-prebuilt coincurve wheel and require its native build prerequisites.
