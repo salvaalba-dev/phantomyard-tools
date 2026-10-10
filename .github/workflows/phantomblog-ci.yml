@@ -15,8 +15,10 @@ jobs:
         working-directory: phantomblog
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Standard-library tests
-        run: python3 -m unittest discover -s tests -v
+      - name: Install test and signed-access dependencies
+        run: python3 -m pip install ".[dev]"
+      - name: Dashboard and publisher tests
+        run: python3 -m pytest tests -q
       - name: Python and browser source syntax
         run: |
           python3 -m compileall -q phantomblog
