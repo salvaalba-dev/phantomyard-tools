@@ -1,4 +1,7 @@
 'use strict';
+// Remove the bearer fragment before any request or asynchronous work.
+let accessCode = new URLSearchParams(window.location.hash.slice(1)).get('c');
+if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
 const $ = s => document.querySelector(s);
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let model, revision, view = 'articles', activeSlug, language = 'en', editorTab = 'content', dirty = false, plan = null, proposal = null;
@@ -100,10 +103,18 @@ function renderPublishing() {
   act('prepare-publish',async()=>{if(dirty)throw new Error('Save before reviewing a publication.');plan=await api('prepare',{slug:$('#publish-article').value,language:$('#publish-language').value,deploy:$('#deploy-connection').value||null,shares:[...document.querySelectorAll('input[name=share]:checked')].map(n=>n.value)});$('#plan').innerHTML=`<p class="warning">This action may deploy files and send posts to the selected accounts. Sharing waits for the exact page revision to be live.</p><pre>${escapeHTML(JSON.stringify(plan,null,2))}</pre><button id="execute-publish">Publish & verify selected plan</button><pre id="publish-result"></pre>`;act('execute-publish',async()=>{const approved=plan;$('#execute-publish').disabled=true;const r=await api('execute',{approval:approved.approval});$('#publish-result').textContent=JSON.stringify(r,null,2);notice(r.errors&&Object.keys(r.errors).length?'Some shares require attention.':'Publishing workflow completed.');});});
   act('refresh-status',async()=>{const s=await api('state');const ledger=$('#publishing-ledger');ledger.textContent=JSON.stringify(s.publishing,null,2);$('#reconcile-form')?.remove();const uncertain=Object.entries(s.publishing.operations).filter(([,v])=>['pending','uncertain'].includes(v.state));if(!uncertain.length)return;ledger.insertAdjacentHTML('afterend',`<div id="reconcile-form"><h3>Resolve an uncertain result</h3><p>Check the provider's own history before approving a retry or recording its receipt.</p>${select('Operation','reconcile-operation',uncertain[0][0],uncertain.map(([key,v])=>[key,v.capability+' · '+key.slice(0,12)]))}${select('Confirmed outcome','reconcile-outcome','complete',[['complete','Provider confirms it completed'],['not-sent','Provider confirms it did not run']])}${field('Public provider receipt (if completed)','reconcile-receipt','')}<label><input id="reconcile-confirm" type="checkbox">I checked the provider history</label><button id="reconcile">Record confirmed outcome</button></div>`);act('reconcile',async()=>{await api('reconcile',{operation:$('#reconcile-operation').value,receipt:$('#reconcile-outcome').value==='complete'?$('#reconcile-receipt').value:null,notSent:$('#reconcile-outcome').value==='not-sent',checkedProviderHistory:$('#reconcile-confirm').checked});notice('Outcome recorded. Review a fresh publishing plan before continuing.');$('#reconcile-form').remove();});});
 }
-$('#login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('login',{token:$('#token').value});$('#token').value='';await load();}catch(error){notice(error.message);}});
 $('#save').addEventListener('click',async()=>{try{await save();}catch(error){notice(error.message);}});
 $('#reload').addEventListener('click',async()=>{if(dirty&&!window.confirm('Discard unsaved local edits and load the latest saved revision?'))return;try{await load();}catch(error){notice(error.message);}});
 $('#logout').addEventListener('click',async()=>{try{await api('logout',{});model=null;$('#app').hidden=true;$('#login').hidden=false;}catch(error){notice(error.message);}});
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{view=b.dataset.view;render();}));
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
-load().catch(()=>{});
+async function startDashboard() {
+  const code = accessCode;
+  accessCode = null;
+  if (code !== null) {
+    try { await api('redeem', {code}); }
+    catch (_) { notice('Access link is invalid, expired or already used. Request a new link.'); return; }
+  }
+  try { await load(); } catch (_) { /* Signed out; show the login screen. */ }
+}
+startDashboard();
