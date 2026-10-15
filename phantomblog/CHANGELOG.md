@@ -23,8 +23,12 @@
   kind 27235, the 60-second freshness window, exact URL/method/payload bindings,
   event replay protection, locked single-use redemption, origin/host checks and
   fragment-only credential delivery. These security rules are unchanged.
-- Rebase the two access-link commits onto the fork's current `main`, keeping
-  the branch diff inside `phantomblog/` and excluding the CI workflow edit.
+- Rebase the two access-link commits onto the fork's current `main`, initially
+  keeping the branch diff inside `phantomblog/` and excluding the CI workflow edit.
+- Repair the PhantomBlog and Facebook connector workflows in a subsequently
+  approved CI scope expansion: select Python 3.11, install PhantomBlog's development
+  extra, and run its full pytest suite instead of unittest discovery. Run Ruff
+  checks and formatting in the PhantomBlog job; keep Ubuntu/Windows connector coverage.
 - Configure Ruff for Python 3.11 and fix import ordering, mutable class
   constants, loop binding, context management and explicit subprocess checks.
   No rules in the selected ruleset are suppressed. Long-line enforcement
