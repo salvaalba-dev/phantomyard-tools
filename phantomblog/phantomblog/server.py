@@ -21,6 +21,7 @@ def make_server(
 ):
     if type(port) is not int or not 0 <= port <= 65535:
         raise core.Invalid("Dashboard port must be between 0 and 65535")
+    access.require_verifier()
     root = root.resolve()
     configured_origin = (
         access.public_origin(public_origin, port) if public_origin else None

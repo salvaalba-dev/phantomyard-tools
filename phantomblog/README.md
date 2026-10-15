@@ -1,8 +1,8 @@
 # PhantomBlog
 
 Static bilingual publishing with a private editorial dashboard and agent proposal
-workflow. Python 3.11+, standard library for builds and the original dashboard; signed access links
-use an optional Schnorr verification dependency. Public websites receive
+workflow. Python 3.11+, standard library for builds; the private dashboard requires
+the signed-access extra for Schnorr verification. Public websites receive
 HTML, CSS and image files; they need no Python service or new build step.
 
 ## What works in v0.1
@@ -90,9 +90,48 @@ MIT. See [LICENSE](LICENSE).
 Install `python -m pip install ".[access]"` for coincurve BIP-340 signing and
 verification. Builds remain standard-library only. Configure authorized public
 keys exclusively at runtime with repeatable `--allow-identity <64-hex-pubkey>`.
-No identities are bundled. An empty allowlist refuses all issuance and login;
-without an allowlist the cryptographic extra is not loaded. A configured
-allowlist without the extra produces a clear installation error.
+No identities are bundled. The dashboard is fail-closed until at least one
+`--allow-identity` is configured: an empty allowlist cannot issue links or create
+sessions. The dashboard checks for the cryptographic extra before binding its
+listener, including with an empty allowlist. A missing extra stops startup with
+an actionable installation error.
+
+### Breaking migration from dashboard tokens
+
+The static dashboard administrator token flow has been removed. Remove
+`PHANTOMBLOG_ADMIN_TOKEN`, dashboard `--token-ref` and dashboard `--persona` from
+service definitions, launch scripts and client integrations. `/api/login` and
+Bearer-token dashboard authentication are no longer supported. `--persona`
+remains available only on the **access-link client**, to select the signing
+identity; it is not a dashboard login option.
+
+Install the optional package extra, which is now required to run the dashboard
+and issue/verify signed links:
+
+```sh
+python3 -m pip install 'phantomblog[access]'
+# From this checkout's phantomblog/ directory instead:
+python3 -m pip install '.[access]'
+```
+
+The extra installs `coincurve`. A client submitting an already-signed event does
+not need a local signer; the dashboard still requires the extra to verify it.
+Static builds do not require the extra. Use these command forms (parentheses,
+brackets and the vertical bar below denote alternatives/optional arguments):
+
+```text
+phantomblog dashboard --allow-identity <64-hex-pubkey> [--public-origin <https-origin>] [--port N]
+phantomblog access-link (--persona <id> --persona-dir <store> | --signed-event <file>) --port N [--public-origin <origin>]
+```
+
+Use the lowercase 64-hex public key, not an `npub` string or private key; repeat
+`--allow-identity` for each authorized identity. Configure the same port and
+public delivery origin on server and client. Request a new link through the
+authorized persona or signed-event client and open the returned URL. Existing
+token-based clients must migrate; there is no compatibility login fallback.
+Links expire after five minutes and can be redeemed once by a single browser
+session. Credentials are delivered only in the `#c=...` fragment, never a query
+parameter. Restarting the dashboard invalidates its in-memory grants/sessions.
 
 ```sh
 python bin/phantomblog --root <publication-workspace> dashboard \

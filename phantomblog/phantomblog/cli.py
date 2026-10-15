@@ -130,6 +130,12 @@ def main(argv=None):
                 access_identities=args.allow_identity,
                 public_origin=args.public_origin,
             )
+            if not args.allow_identity:
+                print(
+                    "Dashboard access is disabled: no --allow-identity is configured. "
+                    "Restart with --allow-identity <64-hex-pubkey> to enable signed links.",
+                    file=sys.stderr,
+                )
             print(
                 f"PhantomBlog dashboard: http://127.0.0.1:{httpd.server_port}/\nRequest a one-time access link through your configured identity signer. Ctrl+C stops the server.",
                 file=sys.stderr,

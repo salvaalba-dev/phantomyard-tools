@@ -53,7 +53,47 @@ signing identity, prints a five-minute link, and sends no external messages:
 python tests/preview.py --port 8790
 ```
 
-## Recorded results
+## Maintenance verification (2026-10-15)
+
+The fork-only branch was rebased onto `origin/main` at
+`e2c9ac19f71cbf8a97c023c171a201ce5e58e877`, retaining the two access-link commits
+and removing their out-of-scope CI workflow edit. The branch diff contains only
+`phantomblog/` paths; no upstream repository was modified.
+
+Commands run from `phantomblog/` in an isolated development environment:
+
+```sh
+python3 -m pytest tests -q -rs
+ruff check .
+ruff format --check phantomblog tests
+python3 -m compileall -q phantomblog
+```
+
+Results on Windows with Python 3.12, pytest 9.1.1, coincurve 21.0.0 and Ruff
+0.17.0: **97 passed, 1 skipped, 31 subtests passed**. The skip is the existing
+symlink fixture because this host cannot create symlinks. Ruff check passes;
+all 17 Python files pass format checking; compileall exits successfully.
+The PowerShell session aliases `python3` and `ruff` to the isolated environment's
+Python and Ruff executables; no system Python installation is changed.
+
+New coverage verifies that missing coincurve rejects dashboard startup before
+binding a listener, with and without an allowlist, and that the CLI returns exit
+code 2 with the installation command. An installed verifier with an empty
+allowlist remains locked, and the CLI explicitly explains how to configure
+`--allow-identity`. A structural comparison against approved `afc5c59` confirms
+that seven access functions (including canonical digest, signing, issuance and
+redemption), both timing constants and the server apart from its pre-bind guard
+are AST-identical. No security protocol redesign was made.
+
+The local Ruff ruleset targets Python 3.11 and selects import, correctness,
+bugbear, broad-exception, simplification, performance, refurbishment, mutable
+class-attribute and subprocess-check rules. No selected rule is ignored.
+`E501` is not selected because embedded HTML and templates have long literals;
+unrelated docstring/style families are not part of this focused ruleset.
+Full-component formatting also passes. Python 3.11 itself was not available on
+this host; `target-version = "py311"` is not a claim of executing that interpreter.
+
+## Historical pre-maintenance results
 
 Checked on Windows with Python 3.12.14, pytest 9.1.1, coincurve 21.0.0,
 Ruff 0.16.10 and Bandit 1.9.4. Tests used a fresh owned temporary workspace;

@@ -56,6 +56,19 @@ def _signer():
     return PrivateKey
 
 
+def require_verifier():
+    """Fail before opening a dashboard listener if its access extra is missing."""
+    try:
+        from coincurve import PublicKeyXOnly
+    except ImportError as exc:
+        raise core.Invalid(
+            "Install phantomblog[access] to verify signed access requests: "
+            "python3 -m pip install 'phantomblog[access]' "
+            "(or python3 -m pip install '.[access]' from the phantomblog directory)"
+        ) from exc
+    return PublicKeyXOnly
+
+
 def _secret_bytes(value):
     """Decode runtime hex or NIP-19 nsec with strict checksum and padding."""
     if not isinstance(value, str):
@@ -164,13 +177,7 @@ class AccessLinks:
         self.requests = {}
         self.public_key = None
         if self.identities:
-            try:
-                from coincurve import PublicKeyXOnly
-            except ImportError as exc:
-                raise core.Invalid(
-                    "Install phantomblog[access] to verify signed access requests"
-                ) from exc
-            self.public_key = PublicKeyXOnly
+            self.public_key = require_verifier()
 
     def issue(self, authorization, origin, delivery_origin=None):
         """Verify a fresh, single-use NIP-98 POST authorization before minting."""

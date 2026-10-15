@@ -128,8 +128,7 @@ def test_link_is_valid_until_five_minute_boundary(dashboard):
 
 def test_empty_allowlist_server_cannot_create_sessions(tmp_path):
     create(tmp_path)
-    with patch.dict("sys.modules", {"coincurve": None}):
-        httpd = server.make_server(tmp_path, 0)
+    httpd = server.make_server(tmp_path, 0)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -362,6 +361,36 @@ def test_malformed_authorization_and_missing_allowlist_dependency(dashboard):
         pytest.raises(core.Invalid, match="Install phantomblog"),
     ):
         access.AccessLinks(["a" * 64])
+
+
+@pytest.mark.parametrize("identities", [(), ("a" * 64,)])
+def test_dashboard_missing_verifier_fails_before_binding(tmp_path, capsys, identities):
+    with (
+        patch.dict("sys.modules", {"coincurve": None}),
+        patch("phantomblog.server.ThreadingHTTPServer") as listener,
+    ):
+        with pytest.raises(
+            core.Invalid, match=r"python3 -m pip install.*phantomblog\[access\]"
+        ):
+            server.make_server(tmp_path, 0, access_identities=identities)
+        listener.assert_not_called()
+        arguments = ["--root", str(tmp_path), "dashboard"]
+        for identity in identities:
+            arguments.extend(["--allow-identity", identity])
+        assert cli.main(arguments) == 2
+        assert "python3 -m pip install" in capsys.readouterr().err
+        listener.assert_not_called()
+
+
+def test_empty_allowlist_cli_reports_how_to_enable_access(tmp_path, capsys):
+    with patch("phantomblog.cli.server.make_server") as make:
+        make.return_value.server_port = 8787
+        assert cli.main(["--root", str(tmp_path), "dashboard"]) == 0
+        message = capsys.readouterr().err
+        assert "access is disabled" in message
+        assert "--allow-identity <64-hex-pubkey>" in message
+        assert make.call_args.kwargs["access_identities"] == []
+        make.return_value.server_close.assert_called_once()
 
 
 def encode_nsec(secret):
