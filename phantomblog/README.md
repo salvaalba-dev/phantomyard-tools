@@ -1,7 +1,8 @@
 # PhantomBlog
 
 Static bilingual publishing with a private editorial dashboard and agent proposal
-workflow. Python 3.11+, standard library only at runtime. Public websites receive
+workflow. Python 3.11+, standard library for builds and the original dashboard; signed access links
+use an optional Schnorr verification dependency. Public websites receive
 HTML, CSS and image files; they need no Python service or new build step.
 
 Development home: `salvaalba-dev/phantomyard-tools/phantomblog`. A future upstream
@@ -60,7 +61,8 @@ python bin/phantomblog --root /absolute/path/to/my-blog dashboard \
   --token-ref vault:PHANTOMBLOG_ADMIN_TOKEN --persona editorial
 ```
 
-Open `http://127.0.0.1:8787/` and sign in with that token. The service binds only
+The master token stays in the dashboard process; request a one-time access link
+as described below. The service binds only
 to loopback and checks authentication, Host and Origin. For remote access use an
 authenticated tunnel retaining that URL; exposing this HTTP listener is not a
 supported production setup. Tokens never go in URLs or browser storage.
@@ -98,3 +100,92 @@ It performs no deployments or messages. Stop it with Ctrl+C. Fixtures are never
 installed into a real publication.
 
 MIT. See [LICENSE](LICENSE).
+
+## One-time dashboard access (PhantomChat identities)
+
+Install the optional signature verifier with `python -m pip install ".[access]"`.
+Start the dashboard with an explicit allow-list of lowercase, 64-character hex
+Nostr public keys belonging to the humans allowed to request access:
+
+```sh
+python bin/phantomblog --root /absolute/path/to/my-blog dashboard \
+  --allow-identity <human-public-key-hex> \
+  --allow-identity <another-human-public-key-hex>
+```
+
+The administrator token is still resolved on the server from the configured
+environment or vault reference. It is not returned, used in a link, or required
+by the requesting human. No allow-list means issuance is disabled. Display names,
+NIP-05 aliases, text claiming to be a person, and relay/bot identities do not grant
+access. Each allowed public key must sign its own request.
+
+A configured PhantomChat/Phantombot adapter requests a link on the human's behalf
+using that human's signed [NIP-98 HTTP authorization](https://github.com/nostr-protocol/nips/blob/master/98.md).
+Use a kind `27235` event with empty content, a current integer `created_at`, and
+exactly one of each required tag:
+
+```json
+[
+  ["u", "http://127.0.0.1:8787/api/access-link"],
+  ["method", "POST"],
+  ["payload", "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"]
+]
+```
+
+The payload hash is SHA-256 of the exact request bytes `{}`. The event ID is the
+NIP-01 canonical hash; the signature is BIP-340 Schnorr. Send the base64-encoded
+complete signed event in `Authorization: Nostr <base64-event>` with
+`POST /api/access-link`, `Content-Type: application/json`, and body `{}`.
+Signatures must be within 60 seconds of server time; a signed request can only be
+used once. It is bound to the exact URL, method and body. Never give the adapter
+an `nsec`, private key or the master dashboard token.
+
+Alternatively, submit the already-signed event from a file using the CLI:
+
+```sh
+python bin/phantomblog access-link --port 8787 --signed-event /private/request.json
+```
+
+It prints one line, `http://127.0.0.1:8787/#c=<one-time-code>`. Deliver that link
+privately to the requesting human; never broadcast it on a Nostr relay. PhantomChat
+uses Nostr identities, but its current chat UI does not itself sign NIP-98 HTTP
+requests: an adapter with access to the human's approved signer is required.
+This change does not install a relay listener or automatically send a message.
+
+Paste the link into a browser with access to the local dashboard. The browser
+immediately removes the fragment with `history.replaceState`, submits the code
+in a JSON POST, and enters the existing authenticated dashboard. The cookie is
+HttpOnly, SameSite=Strict and Secure, including logout. Use a browser that accepts
+Secure cookies on trusted loopback HTTP; do not remove Secure to accommodate a
+browser that refuses them. Host and Origin checks and the loopback-only bind are
+unchanged. Remote clients need an authenticated tunnel retaining this exact
+loopback origin; a remote client cannot reach this machine's loopback by simply
+opening the link. Public HTTPS hosting is not added by this feature.
+
+Links expire after 15 minutes and are consumed only by a successful login. They
+are bearer credentials: anyone with the link can use it first. Codes are stored
+only as in-memory hashes, never in source files, browser storage or server logs.
+The fragment is not sent in the page request or HTTP Referer; JavaScript erases
+it before API calls. Browsers, clipboard managers, extensions or history sync
+can still capture a pasted URL before JavaScript runs, so a blanket guarantee of
+no browser-history exposure is impossible. Do not put links in shared history.
+
+If a link leaks, restart the dashboard to invalidate all outstanding links and
+sessions, then request a new link. If an identity is compromised, remove its
+public key from the allow-list before restarting. Restarting never revives a
+consumed code. Keep signed events and access links out of Git and application logs.
+
+Development checks for this component (install `.[dev]` first):
+
+```sh
+python -m ruff check phantomblog tests
+python -m ruff format --check phantomblog tests
+python -m bandit -r phantomblog -q
+python -m pytest tests -q
+```
+
+The JavaScript bootstrap regression uses Node.js when available; set
+`PHANTOMBLOG_TEST_NODE` to its executable path if it is not on PATH. Build and
+original dashboard functionality still work without the access extra. Signed
+access was verified on Python 3.12; some newer Python versions may lack a
+prebuilt coincurve wheel and require its native build prerequisites.

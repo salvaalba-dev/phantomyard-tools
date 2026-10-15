@@ -10,6 +10,10 @@ requires-python = ">=3.11"
 dependencies = []
 license = {text = "MIT"}
 
+[project.optional-dependencies]
+access = ["coincurve>=21,<22"]
+dev = ["coincurve>=21,<22", "pytest>=8", "ruff>=0.16", "bandit>=1.9"]
+
 [project.scripts]
 phantomblog = "phantomblog.cli:main"
 
