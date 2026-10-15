@@ -3,16 +3,133 @@
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 import threading
 import time
 from http.client import HTTPConnection
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import core
 
-LIFETIME = 15 * 60
+LIFETIME = 5 * 60
 REQUEST_WINDOW = 60
+
+
+def public_origin(value, port):
+    """Accept an origin only, never credentials, paths, fragments or cleartext WAN."""
+    if value is None:
+        return f"http://127.0.0.1:{port}"
+    try:
+        parsed = urlsplit(value)
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or any(ord(c) <= 32 or ord(c) >= 127 for c in value)
+            or parsed.scheme not in ("http", "https")
+            or (parsed.scheme == "http" and parsed.hostname != "127.0.0.1")
+            or (parsed.port is not None and not 1 <= parsed.port <= 65535)
+            or value != f"{parsed.scheme}://{parsed.netloc}"
+            or "\\" in value
+        ):
+            raise ValueError
+    except (ValueError, TypeError) as exc:
+        raise core.Invalid(
+            "Public origin must be an HTTPS origin or loopback HTTP origin"
+        ) from exc
+    return value
+
+
+def _signer():
+    try:
+        from coincurve import PrivateKey
+    except ImportError as exc:
+        raise core.Invalid(
+            "Install phantomblog[access] to sign access requests"
+        ) from exc
+    return PrivateKey
+
+
+def _secret_bytes(value):
+    """Decode runtime hex or NIP-19 nsec with strict checksum and padding."""
+    if not isinstance(value, str):
+        raise TypeError
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        return bytes.fromhex(value)
+    if value != value.lower() or not value.startswith("nsec1") or len(value) != 63:
+        raise ValueError
+    alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+    data = [alphabet.index(c) for c in value[5:]]
+    hrp = "nsec"
+    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    checksum = 1
+    for digit in expanded + data:
+        top = checksum >> 25
+        checksum = ((checksum & 0x1FFFFFF) << 5) ^ digit
+        for bit, generator in enumerate(
+            (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+        ):
+            if (top >> bit) & 1:
+                checksum ^= generator
+    if checksum != 1:
+        raise ValueError
+    result = bytearray()
+    accumulator = bits = 0
+    for digit in data[:-6]:
+        accumulator = (accumulator << 5) | digit
+        bits += 5
+        if bits >= 8:
+            bits -= 8
+            result.append((accumulator >> bits) & 255)
+    if len(result) != 32 or bits >= 5 or ((accumulator << (8 - bits)) & 255):
+        raise ValueError
+    return bytes(result)
+
+
+def persona_event(persona, persona_dir, port):
+    """Read only the selected store/<id>/identity.json; never create or mutate it."""
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise core.Invalid("Dashboard port must be between 1 and 65535")
+    signer = _signer()
+    if not isinstance(persona, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", persona):
+        raise core.Invalid("Invalid persona id")
+    store = persona_dir or os.environ.get("PHANTOMBLOG_PERSONA_DIR")
+    if not store:
+        raise core.Invalid(
+            "Supply --persona-dir or PHANTOMBLOG_PERSONA_DIR (persona store)"
+        )
+    try:
+        root = Path(store).resolve(strict=True)
+        identity = core.contained(root, persona + "/identity.json", True)
+        with identity.open("rb") as source:
+            raw = source.read(8193)
+        if len(raw) > 8192:
+            raise ValueError
+        value = core.decode(raw)
+        key = signer(_secret_bytes(value["nsec"]))
+    except (OSError, ValueError, TypeError, KeyError, core.Invalid) as exc:
+        raise core.Invalid("Persona identity is unavailable or invalid") from exc
+    event = {
+        "pubkey": key.public_key_xonly.format().hex(),
+        "created_at": int(time.time()),
+        "kind": 27235,
+        "tags": [
+            ["u", public_origin(None, port) + "/api/access-link"],
+            ["method", "POST"],
+            ["payload", hashlib.sha256(b"{}").hexdigest()],
+            ["nonce", secrets.token_hex(16)],
+        ],
+        "content": "",
+    }
+    event["id"] = event_digest(event)
+    event["sig"] = key.sign_schnorr(bytes.fromhex(event["id"])).hex()
+    return event
 
 
 def event_digest(event):
@@ -55,11 +172,12 @@ class AccessLinks:
                 ) from exc
             self.public_key = PublicKeyXOnly
 
-    def issue(self, authorization, origin):
+    def issue(self, authorization, origin, delivery_origin=None):
         """Verify a fresh, single-use NIP-98 POST authorization before minting."""
         try:
             if (
                 not self.identities
+                or not isinstance(authorization, str)
                 or not authorization.startswith("Nostr ")
                 or len(authorization) > 8192
             ):
@@ -137,7 +255,7 @@ class AccessLinks:
             code = secrets.token_urlsafe(32)
             self.grants[hashlib.sha256(code.encode()).digest()] = now + LIFETIME
             self.requests[event["id"]] = now + 2 * REQUEST_WINDOW + 1
-            return origin + "/#c=" + code
+            return (delivery_origin or origin) + "/#c=" + code
 
     def redeem(self, code, create_session):
         """Consume only after session creation succeeds, atomically across threads."""
@@ -153,10 +271,11 @@ class AccessLinks:
             return session
 
 
-def request_link(event, port):
+def request_link(event, port, origin=None):
     """Send an already-signed event to the fixed loopback issuer, without redirects."""
     if type(port) is not int or not 1 <= port <= 65535:
         raise core.Invalid("Dashboard port must be between 1 and 65535")
+    origin = public_origin(origin, port)
     authorization = "Nostr " + base64.b64encode(core.encoded(event)).decode("ascii")
     if len(authorization) > 8192:
         raise core.Invalid("Signed access request is too large")
@@ -174,7 +293,7 @@ def request_link(event, port):
             raise core.Invalid("Signed access request refused")
         link = value.get("link")
         if not isinstance(link, str) or not re.fullmatch(
-            rf"http://127\.0\.0\.1:{port}/#c=[A-Za-z0-9_-]{{43}}", link
+            re.escape(origin) + r"/#c=[A-Za-z0-9_-]{43}", link
         ):
             raise core.Invalid("Invalid access link response")
         return link

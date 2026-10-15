@@ -33,8 +33,9 @@ def main(argv=None):
         sub.add_parser(name)
     dash = sub.add_parser("dashboard")
     dash.add_argument("--port", type=int, default=8787)
-    dash.add_argument("--token-ref", default="env:PHANTOMBLOG_ADMIN_TOKEN")
-    dash.add_argument("--persona")
+    dash.add_argument(
+        "--public-origin", help="Delivery origin served by a trusted HTTPS proxy"
+    )
     dash.add_argument(
         "--allow-identity",
         action="append",
@@ -45,7 +46,15 @@ def main(argv=None):
         "access-link",
         help="Request a one-time link with an already-signed NIP-98 event",
     )
-    link.add_argument("--signed-event", type=Path, required=True)
+    selection = link.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--signed-event", type=Path)
+    selection.add_argument("--persona", help="Explicit runtime persona id")
+    link.add_argument(
+        "--persona-dir", type=Path, help="Persona store containing <id>/identity.json"
+    )
+    link.add_argument(
+        "--public-origin", help="Must match the dashboard delivery origin"
+    )
     link.add_argument("--port", type=int, default=8787)
     prepare = sub.add_parser("prepare")
     prepare.add_argument("slug")
@@ -69,11 +78,18 @@ def main(argv=None):
     root = args.root.resolve()
     try:
         if args.command == "access-link":
-            with args.signed_event.open("rb") as source:
-                encoded_event = source.read(8193)
-            if len(encoded_event) > 8192:
-                raise core.Invalid("Signed access request is too large")
-            result = access.request_link(core.decode(encoded_event), args.port)
+            origin = access.public_origin(args.public_origin, args.port)
+            if args.persona:
+                event = access.persona_event(args.persona, args.persona_dir, args.port)
+            else:
+                if args.persona_dir:
+                    raise core.Invalid("--persona-dir requires --persona")
+                with args.signed_event.open("rb") as source:
+                    encoded_event = source.read(8193)
+                if len(encoded_event) > 8192:
+                    raise core.Invalid("Signed access request is too large")
+                event = core.decode(encoded_event)
+            result = access.request_link(event, args.port, origin)
             print(json.dumps({"link": result}) if args.json else result)
             return 0
         if args.command == "init":
@@ -108,9 +124,11 @@ def main(argv=None):
             mcp.serve(root)
             return 0
         else:
-            token = server.token_from_reference(args.token_ref, args.persona)
             httpd = server.make_server(
-                root, token, args.port, access_identities=args.allow_identity
+                root,
+                args.port,
+                access_identities=args.allow_identity,
+                public_origin=args.public_origin,
             )
             print(
                 f"PhantomBlog dashboard: http://127.0.0.1:{httpd.server_port}/\nRequest a one-time access link through your configured identity signer. Ctrl+C stops the server.",

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import hmac
-import os
 import re
 import secrets
-import subprocess
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -14,54 +11,20 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import access, connectors, core, review
 
 
-def token_from_reference(reference, persona):
-    if reference.startswith("env:"):
-        value = os.environ.get(reference[4:], "")
-    elif reference.startswith("vault:") and persona:
-        if not re.fullmatch(r"[a-zA-Z0-9_-]+", reference[6:]) or not re.fullmatch(
-            r"[a-zA-Z0-9_-]+", persona
-        ):
-            raise core.Invalid("Invalid vault reference/persona")
-        executable = connectors.executable_path()
-        if not executable:
-            raise core.Invalid("Phantombot is required to resolve a vault token")
-        if executable.lower().endswith((".cmd", ".bat")):
-            raise core.Invalid(
-                "Use an executable Phantombot runtime to resolve vault tokens"
-            )
-        try:
-            r = subprocess.run(
-                [executable, "vault", "get", reference[6:], "--persona", persona],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
-            value = r.stdout.strip() if r.returncode == 0 else ""
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise core.Invalid("Vault token could not be resolved") from exc
-    else:
-        raise core.Invalid(
-            "Use vault:NAME with --persona or env:VARIABLE; no plaintext token files"
-        )
-    if len(value) < 24 or any(ord(c) < 33 for c in value):
-        raise core.Invalid(
-            "Dashboard token must have at least 24 characters without whitespace"
-        )
-    return value
-
-
 def make_server(
     root,
-    token,
     port=8787,
     runner=None,
     verifier=connectors.verify_live,
     access_identities=(),
+    public_origin=None,
 ):
     if type(port) is not int or not 0 <= port <= 65535:
         raise core.Invalid("Dashboard port must be between 0 and 65535")
     root = root.resolve()
+    configured_origin = (
+        access.public_origin(public_origin, port) if public_origin else None
+    )
     links = access.AccessLinks(access_identities)
     sessions = set()
     pending = {}
@@ -90,18 +53,21 @@ def make_server(
             self.wfile.write(data)
 
         def boundary(self):
-            origin = f"http://127.0.0.1:{self.server.server_port}"
-            return (
-                self.headers.get("Host") == origin.removeprefix("http://")
-                and self.headers.get("Origin", origin) == origin
-                and self.headers.get("Sec-Fetch-Site", "same-origin")
-                in ("same-origin", "none")
-            )
+            loopback = f"http://127.0.0.1:{self.server.server_port}"
+            origins = {loopback, configured_origin} - {None}
+            # Only explicitly configured origins; never trust forwarded headers.
+            for origin in origins:
+                if (
+                    self.headers.get("Host") == urlsplit(origin).netloc
+                    and self.headers.get("Origin", origin) == origin
+                    and self.headers.get("Sec-Fetch-Site", "same-origin")
+                    in ("same-origin", "none")
+                ):
+                    self.request_origin = origin
+                    return True
+            return False
 
         def authenticated(self):
-            header = self.headers.get("Authorization", "")
-            if header.startswith("Bearer ") and hmac.compare_digest(header[7:], token):
-                return True
             try:
                 cookie = SimpleCookie(self.headers.get("Cookie", ""))
                 return (
@@ -264,7 +230,8 @@ def make_server(
                     try:
                         link = links.issue(
                             self.headers.get("Authorization", ""),
-                            f"http://127.0.0.1:{self.server.server_port}",
+                            self.request_origin,
+                            configured_origin,
                         )
                     except core.Invalid:
                         return self.send(
@@ -282,12 +249,6 @@ def make_server(
                             },
                         )
                     return self.session_response(session)
-                if path == "/api/login":
-                    if not isinstance(
-                        data.get("token"), str
-                    ) or not hmac.compare_digest(data["token"], token):
-                        return self.send(401, {"error": "Invalid dashboard token"})
-                    return self.session_response(self.create_session())
                 if not self.authenticated():
                     return self.send(401, {"error": "Sign in first"})
                 if path == "/api/logout":
