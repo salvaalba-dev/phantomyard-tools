@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- **The invitation tool checks the recorder before inviting (v0).**
+  `tools/meeting-invite.sh` now asks the bridge (`GET /status` →
+  `recorder.ready`, the read-only capability PhantomBridge surfaces from the
+  recorder's local health API) whether the recorder is usable **before**
+  sending anything. While it is not, the invitation is withheld and the
+  responsible persona is notified via the configured `send_via`
+  (`phantombot-notify`) with the reason. `--force` overrides the gate and
+  convenes anyway, **without recording**. The bridge's admin token is read
+  **only** from the environment (`PHANTOMBRIDGE_ADMIN_TOKEN`) at run time —
+  never from the manifest; the bridge status URL is `invite.bridge_status_url`
+  (default `http://127.0.0.1:8090/status`). SPEC §3 (bridge capability table),
+  §7.2 (procedural line + override) and the new §11.6 (recorder deployment
+  probes) are updated, and §11.3's recording-cleanup obligation now names its
+  owner and a disk verification step. Tests: `tests/test_meeting_invite.py`
+  (ready / not-ready / `--force` / missing token / unreachable bridge /
+  dry-run) against a fake bridge and a fake phantombot.
+
+- **Add the recorder guardian — a companion health watch for the Jitsi/Jibri
+  recorder.** A recorder can be *dead* (already covered by systemd
+  `Restart=always` + `StartLimitIntervalSec=0`) or *alive but dumb* (running
+  but unable to record). This adds `tools/recorder-guardian.sh`, run from a
+  systemd timer + oneshot, that reads the recorder's local health endpoint and
+  restarts the four recorder units when two consecutive in-run readings are
+  bad. It is a companion only — no `ExecStart` wrapper, no ordering — so it can
+  never take the recorder down; it owns **zero state** (the double-read is
+  inside one run); its loop brake asks systemd for the recorder's main-process
+  start time and holds off inside a grace window; it **never acts while a
+  recording is in progress** (`busyStatus == BUSY`); the action is narrow
+  (exactly `jibri jibri-xorg jibri-icewm pulseaudio-jibri`); and it stays
+  silent when healthy. Ships `tools/systemd/recorder-guardian.{service,timer}`
+  (dedicated user + a sudoers/polkit allowlist limited to those four units,
+  with a documented root fallback) and end-to-end tests running the real script
+  against a fake health server. SPEC §12 documents the design, the two
+  independent lanes (permanent guardian on the host; the persona asking before
+  convening), the limits (the Record button cannot be hooked; reused links and
+  overruns are covered by the permanent lane; the live BUSY test needs a real
+  recording) and the install recipe (including the already-deployed boot
+  hardening: `Wants=` instead of `Requires=`, `Restart=always`,
+  `StartLimitIntervalSec=0`).
+
 - **PhantomMeet no longer imposes an order on `phantomchat.json` relays.**
   `apply` used to move the org's private relay to the front (`insert(0, …)`)
   and `check-infra` required exactly that position — but phantombot resolves
@@ -13,6 +53,14 @@
   absent and never reorders an existing entry; `check-infra` requires
   **presence**, not position. A relay an operator moved keeps its place on
   re-apply, and `pm unapply` can still reverse it.
+- **Fix `check-infra` flagging every applied persona's `Meetings.md` as stale.**
+  The Meetings.md probe regenerated only the protocol template and compared it
+  against the live managed body, but `apply` writes the protocol *plus* the
+  manifest `kb_appendix`. Any manifest carrying a `kb_appendix` (every real
+  org manifest) therefore reported `stale content` for every persona, even
+  right after a successful apply. The managed body is now rendered by a single
+  shared `_render_kb_body` used by both `apply` and `check-infra`, so the
+  writer and the doctor can no longer drift on the appendix.
 
 - **`_patch_phantomchat` evicts a legacy bridge npub from `allowed_npubs`.**
   The bridge npub is never a principal: it belongs in the untrusted
