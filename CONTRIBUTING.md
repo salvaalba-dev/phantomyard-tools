@@ -1,5 +1,9 @@
 # Contributing to phantomtools
 
+For this fork's repository, branch, and pull-request workflow, read
+[AGENTS.md](./AGENTS.md). Pull requests are the default; direct changes to
+main require explicit user authorization for that change.
+
 Most of this repo's tools touch a **running phantombot persona** — its identity,
 its encrypted secrets, its accumulated memory, its security perimeter. That makes
 the bar here a little different from a normal utility repo, and this document is
