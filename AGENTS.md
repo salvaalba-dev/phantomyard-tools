@@ -25,8 +25,14 @@ Read CONTRIBUTING.md before changing any tool.
 - Rebase onto origin/main only on a task branch owned exclusively by this
   task, preserving unrelated changes. Never rebase or force-push a shared
   branch without explicit agreement on the update strategy.
-- Keep new history linear. Do not create merge commits or rewrite existing
-  user commits.
+- Merge all pull requests using Rebase and merge. Do not use Squash and merge
+  or Create a merge commit. This rule applies to every target branch in this
+  repository and preserves each task commit as an independent commit on the
+  target branch. Rebase and merge keeps history linear but creates new SHAs.
+- Keep new history linear. Do not create merge commits or rewrite commits
+  already on the target branch. Rebase and merge is the authorized exception
+  for task-branch commits: it preserves their messages and authorship while
+  assigning new SHAs when they land.
 - Prefer ordinary fast-forward pushes. Use --force-with-lease only when a
   rebase requires it; never use an unguarded force push.
 - When publishing through the GitHub connector, use the expected branch SHA
