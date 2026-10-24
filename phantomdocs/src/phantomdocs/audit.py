@@ -38,6 +38,8 @@ def append(
     sig: str | None = None,
     sig_pubkey: str | None = None,
     seq: int | None = None,
+    details: dict[str, Any] | None = None,
+    timestamp: str | None = None,
 ) -> str:
     """Append one entry and return the SHA-256 of the raw line written.
 
@@ -53,7 +55,9 @@ def append(
         if lines:
             prev = _sha256(lines[-1])
     entry = {
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "ts": timestamp
+        if timestamp is not None
+        else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "actor": actor,
         "action": action,
         "urn": urn,
@@ -67,12 +71,15 @@ def append(
         entry["sig"] = sig
     if sig_pubkey is not None:
         entry["sigPubkey"] = sig_pubkey
+    if details is not None:
+        entry["details"] = details
     # Write bytes, not text: on Windows text mode translates "\\n" to
     # "\\r\\n". The returned hash must cover the exact durable bytes that
     # head() and verify_chain() later read.
     line = (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
     with open(path, "ab") as f:
-        f.write(line)
+        if f.write(line) != len(line):
+            raise OSError("incomplete audit append; preserve the log for review")
         f.flush()
         os.fsync(f.fileno())
     return _sha256(line)
