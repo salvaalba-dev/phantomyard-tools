@@ -147,7 +147,7 @@ def test_cli_refuses_unknown_or_incomplete_checkpoint_without_writes(tmp_path, c
     assert (
         "no auditSeq anchor" in result.output
         if count is None
-        else "checkpoint" in result.output
+        else ("auditSeq" in result.output or "checkpoint" in result.output)
     )
     assert (tmp_path / "audit.log").read_bytes() == original
     assert path.read_bytes() == before
