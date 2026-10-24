@@ -4,6 +4,13 @@ All notable changes to PhantomDocs are documented in this file.
 
 ## Unreleased
 
+- **Strict seal and audit counters:** reject booleans, negative numbers, floats
+  and text in header and historical counters before sealing or verification.
+  Remove numeric coercion from seal-envelope callers while retaining explicit
+  legacy null defaults. Recovery now explains unknown checkpoint refusal and
+  points to review planning. The trusted-manifest boundary and legitimate
+  explicit-empty-checkpoint crash recovery remain unchanged.
+
 - **Explicit signed legacy checkpoint adoption:** add read-only review plans and
   administrator-authorized adoption using existing actor keys. Preserve original
   audit bytes and document state, bind the complete source snapshot, and resume

@@ -43,6 +43,14 @@ checkpoint of a newly initialized empty namespace still permits recovery after
 its first audit-first transaction fails. Never add a synthetic zero checkpoint
 to an existing log to bypass a migration requirement.
 
+The explicit zero is not proof that a namespace was genuinely new. In an
+unsealed store, recovery trusts the manifest's committed checkpoint; a synthetic
+zero inserted by an actor able to edit that manifest is indistinguishable from
+the legitimate first-transaction crash state. This model does not authenticate
+an unsealed manifest against such replacement. Use independently trusted seals
+or external checkpoints when that threat is in scope; do not remove legitimate
+empty-checkpoint recovery or invent provenance from a counter alone.
+
 ## 2. Commit order
 
 ```
