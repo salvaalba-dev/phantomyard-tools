@@ -1134,6 +1134,11 @@ def verify(backend, org_yaml, org_pubkey, expected_head_seq, checkpoint, root):
             failures += 1
             click.echo(f"FAIL profile: {', '.join(issues)}")
 
+    from .audit_baseline import baseline_issues
+
+    for problem in baseline_issues(root, manifest, org_model, require_org=True):
+        failures += 1
+        click.echo(f"FAIL audit baseline: {problem}")
     if failures:
         raise click.ClickException(f"{failures} node(s) failed verification")
     click.echo(f"verified {len(manifest.get('nodes', []))} node(s)")
@@ -1895,20 +1900,27 @@ def recover(root):
     mismatch, or a sequence gap) is evidence of tampering or manual edits, not
     a crash — it is reported and the namespace is left untouched (fail-closed).
     """
-    data = _load_or_die(root)
-    header = data.get("manifest", {})
-    expected = header.get("auditSeq")
-    if expected is None:
-        raise click.ClickException(
-            "manifest has no auditSeq anchor; nothing to recover"
-        )
+    with manifest_lock(_manifest_path(root)):
+        data = _load_or_die(root)
+        header = data.get("manifest", {})
+        expected = header.get("auditSeq")
+        if expected is None:
+            raise click.ClickException(
+                "manifest has no auditSeq anchor; nothing to recover"
+            )
+        from .audit_baseline import baseline_issues
 
-    try:
-        discarded = audit_reconcile(root, expected, header.get("auditHead"))
-    except ValueError as exc:
-        raise click.ClickException(
-            "refusing to recover (tampering, not a crash): " + str(exc)
-        )
+        problems = baseline_issues(root, data)
+        if problems:
+            raise click.ClickException(
+                "refusing audit recovery: " + "; ".join(problems)
+            )
+        try:
+            discarded = audit_reconcile(root, expected, header.get("auditHead"))
+        except ValueError as exc:
+            raise click.ClickException(
+                "refusing to recover (tampering, not a crash): " + str(exc)
+            ) from exc
 
     if discarded == 0:
         click.echo("nothing to recover: audit log is consistent with the manifest")
@@ -1919,6 +1931,45 @@ def recover(root):
             f"(mutation{'s' if discarded != 1 else ''} committed to the audit log "
             f"but not the manifest)"
         )
+
+
+@main.command("audit-checkpoint-plan")
+@click.option("--org-yaml", required=True, help="Authoritative PhantomOrg org.yaml.")
+@click.option("--actor", default=None, help=_ACTOR_HELP)
+@click.option("--root", default=".", show_default=True, help="Local backend root.")
+def audit_checkpoint_plan(org_yaml, actor, root):
+    """Print a private review plan; do not adopt or rewrite legacy history."""
+    from .audit_baseline import checkpoint_plan
+
+    actor_id, org = _require_acl(org_yaml, actor)
+    try:
+        plan = checkpoint_plan(root, _load_or_die(root), org, actor_id)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(plan, indent=2, ensure_ascii=True))
+
+
+@main.command("adopt-audit-checkpoint")
+@click.option("--plan", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--reason", required=True, help="Reason for adopting the reviewed history."
+)
+@click.option("--org-yaml", required=True, help="Authoritative PhantomOrg org.yaml.")
+@click.option("--actor", default=None, help=_ACTOR_HELP)
+@click.option("--nsec-file", default=None, help="Existing actor signing-key file.")
+@click.option("--root", default=".", show_default=True, help="Local backend root.")
+def adopt_audit_checkpoint(plan, reason, org_yaml, actor, nsec_file, root):
+    """Adopt a reviewed legacy checkpoint without truncating any audit entries."""
+    from .audit_baseline import read_checkpoint_plan
+
+    actor_id, _org = _require_acl(org_yaml, actor)
+    try:
+        reviewed = read_checkpoint_plan(plan)
+        service = DocumentService(root, org_yaml, actor_id, nsec_file)
+        result = service.adopt_audit_checkpoint(plan=reviewed, reason=reason)
+    except (DocumentError, ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=True))
 
 
 @main.command("derive-manifest")

@@ -198,6 +198,7 @@ class DocumentService:
         nsec_file: str | None = None,
     ):
         self.root = root
+        self.org_yaml_path = org_yaml_path
         self.org = self._load_org(org_yaml_path)
         self.actor_id = self._require_declared_actor(actor_id)
         self.nsec = _signing_key(nsec_file)
@@ -292,6 +293,8 @@ class DocumentService:
         sig: str | None = None,
         sig_pubkey: str | None = None,
         head_mac: str | None = None,
+        audit_details: dict[str, Any] | None = None,
+        audit_ts: str | None = None,
     ) -> None:
         """Commit one mutation as manifest + audit, under the caller's lock.
 
@@ -331,6 +334,8 @@ class DocumentService:
             sig,
             sig_pubkey,
             seq=seq,
+            **({"details": audit_details} if audit_details is not None else {}),
+            **({"timestamp": audit_ts} if audit_ts is not None else {}),
         )
         m = repo.data["manifest"]
         m["headSeq"] = seq
@@ -417,9 +422,21 @@ class DocumentService:
         if not os.path.exists(path):
             raise DocumentError(f"no manifest at {path} — run `pd init` first")
         try:
-            return ManifestRepository(load(path))
+            data = load(path)
+            from .audit_baseline import baseline_issues
+
+            problems = baseline_issues(self.root, data, self.org, require_org=True)
+            if problems:
+                raise DocumentError("; ".join(problems))
+            return ManifestRepository(data)
         except ManifestError as exc:
             raise DocumentError(str(exc))
+
+    def adopt_audit_checkpoint(self, *, plan, reason):
+        """Adopt reviewed legacy audit bytes; signing and admin authority required."""
+        from .audit_baseline import adopt_checkpoint
+
+        return adopt_checkpoint(self, plan=plan, reason=reason)
 
     def _sign_fields(
         self,

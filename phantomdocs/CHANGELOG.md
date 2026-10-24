@@ -4,6 +4,14 @@ All notable changes to PhantomDocs are documented in this file.
 
 ## Unreleased
 
+- **Explicit signed legacy checkpoint adoption:** add read-only review plans and
+  administrator-authorized adoption using existing actor keys. Preserve original
+  audit bytes and document state, bind the complete source snapshot, and resume
+  an interrupted signed append without duplication or truncation. Verify receipt
+  integrity and key binding, detect short audit writes, and hold the writer lock
+  throughout recovery. Historical unsigned entries remain unsigned; no automatic
+  migration, reclassification, new dependencies or deployment.
+
 - **Preserve unanchored legacy audit history:** refuse automatic recovery during
   mutations when a non-empty audit log has no committed manifest checkpoint.
   Require exact non-negative checkpoint counts and coherent head hashes, without
