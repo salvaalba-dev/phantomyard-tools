@@ -4,6 +4,12 @@ All notable changes to PhantomDocs are documented in this file.
 
 ## Unreleased
 
+- **Classification event signature contract:** add a closed canonical envelope,
+  domain-separated Schnorr signature primitives, and signed-record/history
+  digests using existing keys and dependencies. Tests bind every field, reject
+  malformed payloads and prevent cross-protocol signature reuse. This does not
+  authorize or persist transitions, change the store protocol, or alter access.
+
 - **Classification planner validation:** validate the manifest schema and graph
   before dereferencing nodes, including direct library calls. Missing categories
   now produce a domain validation error instead of an incidental `KeyError`.
