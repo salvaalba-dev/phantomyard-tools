@@ -1904,7 +1904,7 @@ def recover(root):
         )
 
     try:
-        discarded = audit_reconcile(root, int(expected), header.get("auditHead"))
+        discarded = audit_reconcile(root, expected, header.get("auditHead"))
     except ValueError as exc:
         raise click.ClickException(
             "refusing to recover (tampering, not a crash): " + str(exc)
