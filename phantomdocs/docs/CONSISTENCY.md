@@ -26,6 +26,21 @@ The manifest is the *state*; the audit log is the *evidence*. The manifest
 records the audit position it committed alongside (`auditSeq` + `auditHead`),
 so the two can be compared after a crash instead of trusting either one.
 
+### Legacy audit checkpoints
+
+A missing or null `auditSeq` means the committed audit position is unknown;
+it does not mean that zero entries were committed. Automatic recovery during a
+mutation refuses a non-empty legacy log without this checkpoint and leaves its
+bytes unchanged. `pd recover` also refuses an unknown checkpoint. Establishing
+a reviewed checkpoint for legacy history is a separate migration, not recovery.
+
+A checkpoint count must be an exact non-negative integer. A positive count
+requires a valid head hash; an explicit zero requires a null head. Incomplete or
+incoherent checkpoints cannot authorize truncation. The explicit `(0, null)`
+checkpoint of a newly initialized empty namespace still permits recovery after
+its first audit-first transaction fails. Never add a synthetic zero checkpoint
+to an existing log to bypass a migration requirement.
+
 ## 2. Commit order
 
 ```

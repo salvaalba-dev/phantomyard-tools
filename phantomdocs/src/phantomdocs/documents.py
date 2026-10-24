@@ -351,10 +351,19 @@ class DocumentService:
         :class:`DocumentError` fail-closed.
         """
         m = repo.data["manifest"]
+        expected = m.get("auditSeq")
+        if expected is None:
+            if audit_head(self.root)[0]:
+                raise DocumentError(
+                    "legacy audit log has no manifest checkpoint; refusing "
+                    "automatic recovery or mutation until its history has "
+                    "a reviewed checkpoint"
+                )
+            expected = 0
         try:
             audit_reconcile(
                 self.root,
-                int(m.get("auditSeq") or 0),
+                expected,
                 m.get("auditHead"),
             )
         except ValueError as exc:

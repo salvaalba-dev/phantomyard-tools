@@ -4,6 +4,12 @@ All notable changes to PhantomDocs are documented in this file.
 
 ## Unreleased
 
+- **Preserve unanchored legacy audit history:** refuse automatic recovery during
+  mutations when a non-empty audit log has no committed manifest checkpoint.
+  Require exact non-negative checkpoint counts and coherent head hashes, without
+  coercing booleans. Keep explicit empty-checkpoint crash recovery supported;
+  never infer that unknown history is an orphaned tail.
+
 - **Classification event signature contract:** add a closed canonical envelope,
   domain-separated Schnorr signature primitives, and signed-record/history
   digests using existing keys and dependencies. Tests bind every field, reject
