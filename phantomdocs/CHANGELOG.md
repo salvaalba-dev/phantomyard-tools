@@ -11,6 +11,14 @@ All notable changes to PhantomDocs are documented in this file.
   points to review planning. The trusted-manifest boundary and legitimate
   explicit-empty-checkpoint crash recovery remain unchanged.
 
+- **Detached checkpoint signatures:** prepare fresh, fixed-action signing
+  requests and accept externally signed checkpoint records without loading a
+  local secret. Preserve the existing signature format and writer-lock guards;
+  enforce current authority, key lifecycle, exact request binding and a
+  60-second first-append window. Durable retries remain idempotent. Adds receiver
+  tests and documents the separately required runtime adapter; no daemon or
+  deployment changes.
+
 - **Explicit signed legacy checkpoint adoption:** add read-only review plans and
   administrator-authorized adoption using existing actor keys. Preserve original
   audit bytes and document state, bind the complete source snapshot, and resume

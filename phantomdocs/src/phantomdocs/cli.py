@@ -1973,19 +1973,58 @@ def audit_checkpoint_plan(org_yaml, actor, root):
 @click.option("--org-yaml", required=True, help="Authoritative PhantomOrg org.yaml.")
 @click.option("--actor", default=None, help=_ACTOR_HELP)
 @click.option("--nsec-file", default=None, help="Existing actor signing-key file.")
+@click.option(
+    "--signed-record",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Externally signed checkpoint; do not load a local signing key.",
+)
 @click.option("--root", default=".", show_default=True, help="Local backend root.")
-def adopt_audit_checkpoint(plan, reason, org_yaml, actor, nsec_file, root):
+def adopt_audit_checkpoint(
+    plan, reason, org_yaml, actor, nsec_file, signed_record, root
+):
     """Adopt a reviewed legacy checkpoint without truncating any audit entries."""
-    from .audit_baseline import read_checkpoint_plan
+    from .audit_baseline import read_checkpoint_plan, read_signed_checkpoint
 
     actor_id, _org = _require_acl(org_yaml, actor)
     try:
+        if signed_record and nsec_file:
+            raise ValueError("choose --nsec-file or --signed-record")
         reviewed = read_checkpoint_plan(plan)
-        service = DocumentService(root, org_yaml, actor_id, nsec_file)
-        result = service.adopt_audit_checkpoint(plan=reviewed, reason=reason)
+        record = read_signed_checkpoint(signed_record) if signed_record else None
+        service = DocumentService(
+            root,
+            org_yaml,
+            actor_id,
+            nsec_file,
+            signing_key_from_environment=record is None,
+        )
+        result = service.adopt_audit_checkpoint(
+            plan=reviewed, reason=reason, signed_record=record
+        )
     except (DocumentError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(result, indent=2, ensure_ascii=True))
+
+
+@main.command("audit-checkpoint-request")
+@click.option("--plan", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--reason", required=True)
+@click.option("--org-yaml", required=True)
+@click.option("--actor", default=None, help=_ACTOR_HELP)
+@click.option("--root", default=".", show_default=True)
+def audit_checkpoint_request(plan, reason, org_yaml, actor, root):
+    """Print a fresh fixed-action request; do not sign or modify the namespace."""
+    from .audit_baseline import prepare_signing_request, read_checkpoint_plan
+
+    actor_id, org = _require_acl(org_yaml, actor)
+    try:
+        payload = prepare_signing_request(
+            root, _load_or_die(root), org, actor_id, read_checkpoint_plan(plan), reason
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(payload, indent=2, ensure_ascii=True))
 
 
 @main.command("derive-manifest")

@@ -6,11 +6,11 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from . import audit
-from .access import can_administer_namespace, key_valid_at, policy_hash
+from .access import can_administer_namespace, key_valid_at, key_valid_now, policy_hash
 from .documents import DocumentError, _now_iso
 from .identity import is_valid_hex64
 from .manifest import (
@@ -121,7 +121,7 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("invalid checkpoint plan unsigned-node count")
 
 
-def read_checkpoint_plan(path: str) -> dict[str, Any]:
+def _read_private_json(path: str) -> dict[str, Any]:
     """Read a bounded, unambiguous private JSON review artifact."""
 
     def unique(pairs):
@@ -136,9 +136,22 @@ def read_checkpoint_plan(path: str) -> dict[str, Any]:
         raw = stream.read(65537)
     if len(raw) > 65536:
         raise ValueError("checkpoint plan exceeds 64 KiB")
-    plan = json.loads(raw, object_pairs_hook=unique)
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def read_checkpoint_plan(path: str) -> dict[str, Any]:
+    """Read a closed checkpoint plan without ambiguous duplicate fields."""
+    plan = _read_private_json(path)
     _validate_plan(plan)
     return plan
+
+
+def read_signed_checkpoint(path: str) -> dict[str, Any]:
+    """Read a bounded externally signed record; authorization is checked on apply."""
+    record = _read_private_json(path)
+    if not _record_valid(record):
+        raise ValueError("invalid external checkpoint signature")
+    return record
 
 
 def checkpoint_plan(
@@ -399,7 +412,53 @@ def baseline_issues(
         return [f"invalid audit-baseline evidence: {exc}"]
 
 
-def adopt_checkpoint(service, *, plan: dict[str, Any], reason: str) -> dict[str, Any]:
+def signing_request(
+    plan: dict[str, Any], reason: str, issued_at: str
+) -> dict[str, Any]:
+    """Prepare exact public signing input; this is not authority to sign."""
+    _validate_plan(plan)
+    payload = {
+        "version": 1,
+        "action": _ACTION,
+        "plan": plan,
+        "reason": reason,
+        "issued_at": issued_at,
+        "seq": plan.get("next_seq"),
+    }
+    _envelope(payload)
+    return json.loads(_canonical(payload))
+
+
+def prepare_signing_request(root, data, org, actor, plan, reason):
+    """Recheck a reviewed snapshot before producing a fixed-action request."""
+    _validate_plan(plan)
+    fresh = checkpoint_plan(root, data, org, actor)
+    if _canonical(fresh) != _canonical(plan):
+        raise ValueError("stale checkpoint signing plan")
+    return signing_request(fresh, reason, _now_iso())
+
+
+def _external_record(record, plan, reason, org, actor):
+    record = json.loads(_canonical(record))
+    if not _record_valid(record):
+        raise ValueError("invalid external checkpoint signature")
+    payload = record["payload"]
+    if (
+        _canonical(payload["plan"]) != _canonical(plan)
+        or payload["reason"] != reason
+        or payload["plan"]["actor"] != actor
+    ):
+        raise ValueError("external checkpoint signature does not match the request")
+    if not key_valid_now(org, actor, record["sigPubkey"]) or not key_valid_at(
+        org, actor, record["sigPubkey"], payload["issued_at"]
+    ):
+        raise ValueError("external checkpoint signer is not a valid actor key")
+    return record
+
+
+def adopt_checkpoint(
+    service, *, plan: dict[str, Any], reason: str, signed_record=None
+) -> dict[str, Any]:
     """Adopt one reviewed prefix under the native lock; never truncate the log."""
     try:
         plan = json.loads(_canonical(plan))
@@ -415,14 +474,27 @@ def adopt_checkpoint(service, *, plan: dict[str, Any], reason: str) -> dict[str,
             service._require_declared_actor(service.actor_id)
             service._require_namespace_admin()
             service._bind_key_to_actor()
-            if not service.nsec:
+            if signed_record is not None and service.nsec:
+                raise ValueError("choose local signing or an external signed record")
+            if not service.nsec and signed_record is None:
                 raise DocumentError(
                     "denied: adopting an audit checkpoint requires the actor signing key"
                 )
             service.policy_hash = policy_hash(service.org)
+            supplied = (
+                _external_record(
+                    signed_record, plan, reason, service.org, service.actor_id
+                )
+                if signed_record is not None
+                else None
+            )
             data = load(path)
             existing = data["manifest"].get("auditBaseline")
             if existing is not None:
+                if supplied is not None and _canonical(supplied) != _canonical(
+                    existing
+                ):
+                    raise ValueError("external record differs from committed evidence")
                 problems = baseline_issues(
                     service.root, data, service.org, require_org=True
                 )
@@ -444,6 +516,8 @@ def adopt_checkpoint(service, *, plan: dict[str, Any], reason: str) -> dict[str,
             )
             if pending:
                 record = rows[-1].get("details")
+                if supplied is not None and _canonical(supplied) != _canonical(record):
+                    raise ValueError("external record differs from pending evidence")
                 problems = _context_matches(
                     service.root, data, service.org, record, require_org=True
                 )
@@ -473,20 +547,22 @@ def adopt_checkpoint(service, *, plan: dict[str, Any], reason: str) -> dict[str,
                     raise ValueError(
                         "stale adoption plan; re-review the current namespace and audit"
                     )
-                payload = {
-                    "version": 1,
-                    "action": _ACTION,
-                    "plan": fresh,
-                    "reason": reason,
-                    "issued_at": _now_iso(),
-                    "seq": fresh["next_seq"],
-                }
+                payload = signing_request(fresh, reason, _now_iso())
                 envelope = _envelope(payload)
-                record = {
+                record = supplied or {
                     "payload": payload,
                     "sig": sign_mutation(service.nsec, envelope),
                     "sigPubkey": pubkey_from_nsec(service.nsec),
                 }
+                payload = record["payload"]
+                if supplied is not None:
+                    stamp = datetime.strptime(
+                        payload["issued_at"], "%Y-%m-%dT%H:%M:%S%z"
+                    )
+                    if abs((datetime.now(timezone.utc) - stamp).total_seconds()) > 60:
+                        raise ValueError(
+                            "external checkpoint signature must be within 60 seconds"
+                        )
                 if not key_valid_at(
                     service.org,
                     service.actor_id,

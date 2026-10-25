@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from contextlib import contextmanager
+from datetime import timedelta
 
 import coincurve
 import pytest
@@ -15,7 +16,9 @@ from phantomdocs import audit, audit_baseline, cli, documents, signing
 from phantomdocs.audit_baseline import (
     baseline_issues,
     checkpoint_plan,
+    prepare_signing_request,
     read_checkpoint_plan,
+    signing_request,
 )
 from phantomdocs.cli import main
 from phantomdocs.documents import DocumentError, DocumentService
@@ -717,3 +720,255 @@ def test_cli_adopts_the_reviewed_plan(legacy):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["preserved_entries"] == 3
+
+
+def _external_fixture(case, *, stamp=None, secret=None):
+    payload = signing_request(
+        case["plan"], "Reviewed legacy history", stamp or documents._now_iso()
+    )
+    secret = secret or case["key"].read_text()
+    return {
+        "payload": payload,
+        "sigPubkey": signing.pubkey_from_nsec(secret),
+        "sig": signing.sign_mutation(secret, audit_baseline._envelope(payload)),
+    }
+
+
+def _external_service(case):
+    return DocumentService(
+        str(case["root"]),
+        str(case["policy"]),
+        "custodian",
+        signing_key_from_environment=False,
+    )
+
+
+def test_signing_request_is_detached_read_only_and_stale_guarded(legacy):
+    c = legacy
+    request = prepare_signing_request(
+        str(c["root"]),
+        c["data"],
+        c["org"],
+        "custodian",
+        c["plan"],
+        "Reviewed legacy history",
+    )
+    assert request["action"] == "adopt-audit-checkpoint"
+    request["plan"]["actor"] = "other"
+    assert c["plan"]["actor"] == "custodian"
+    stale = copy.deepcopy(c["plan"])
+    stale["audit_digest"] = "a" * 64
+    with pytest.raises(ValueError, match="stale"):
+        prepare_signing_request(
+            str(c["root"]),
+            c["data"],
+            c["org"],
+            "custodian",
+            stale,
+            "Reviewed legacy history",
+        )
+    assert c["manifest"].read_bytes() == c["manifest_before"]
+
+
+def test_external_service_does_not_resolve_environment_key(legacy, monkeypatch):
+    monkeypatch.setenv("PHANTOMDOCS_NSEC", "not-a-private-key")
+    monkeypatch.setattr(documents, "_signing_key", lambda *_: pytest.fail("key access"))
+    assert _external_service(legacy).nsec is None
+
+
+@pytest.mark.parametrize(
+    "change", ["signature", "actor", "reason", "extra", "domain", "key"]
+)
+def test_external_record_contract_rejects_mismatch(legacy, change):
+    c = legacy
+    r = _external_fixture(c)
+    if change == "signature":
+        r["sig"] = "0" * 128
+    elif change == "actor":
+        r["payload"]["plan"]["actor"] = "worker"
+    elif change == "reason":
+        r["payload"]["reason"] = "Another reason"
+    elif change == "extra":
+        r["payload"]["digest"] = "0" * 64
+    elif change == "domain":
+        r["sig"] = signing.sign_mutation(c["key"].read_text(), b"another-domain")
+    else:
+        r = _external_fixture(c, secret=coincurve.PrivateKey().secret.hex())
+    with pytest.raises(ValueError):
+        audit_baseline._external_record(
+            r, c["plan"], "Reviewed legacy history", c["org"], "custodian"
+        )
+
+
+@posix
+def test_external_adoption_preserves_bytes_without_local_key_and_is_idempotent(
+    legacy, monkeypatch
+):
+    c = legacy
+    r = _external_fixture(c)
+    service = _external_service(c)
+    monkeypatch.setattr(
+        audit_baseline, "sign_mutation", lambda *_: pytest.fail("local signing")
+    )
+    result = service.adopt_audit_checkpoint(
+        plan=c["plan"], reason="Reviewed legacy history", signed_record=r
+    )
+    assert result["preserved_entries"] == 3
+    data = load(str(c["manifest"]))
+    assert data["manifest"]["auditBaseline"] == r
+    assert data["nodes"] == c["data"]["nodes"]
+    raw = (c["root"] / "audit.log").read_bytes()
+    assert raw.startswith(c["audit_before"]) and len(raw.splitlines()) == 4
+    assert service.adopt_audit_checkpoint(
+        plan=c["plan"], reason="Reviewed legacy history", signed_record=r
+    )["unchanged"]
+    assert (c["root"] / "audit.log").read_bytes() == raw
+
+
+@posix
+@pytest.mark.parametrize("stamp", ["2000-01-01T00:00:00Z", "9999-01-01T00:00:00Z"])
+def test_external_stale_or_future_signature_never_appends(legacy, stamp):
+    c = legacy
+    with pytest.raises(DocumentError, match="60 seconds"):
+        _external_service(c).adopt_audit_checkpoint(
+            plan=c["plan"],
+            reason="Reviewed legacy history",
+            signed_record=_external_fixture(c, stamp=stamp),
+        )
+    assert c["manifest"].read_bytes() == c["manifest_before"]
+    assert (c["root"] / "audit.log").read_bytes() == c["audit_before"]
+
+
+@posix
+def test_external_pending_retry_keeps_durable_record_after_expiry(legacy, monkeypatch):
+    c = legacy
+    r = _external_fixture(c)
+    service = _external_service(c)
+    original_save = documents.save
+    monkeypatch.setattr(
+        documents,
+        "save",
+        lambda *_: (_ for _ in ()).throw(OSError("interrupted")),
+    )
+    with pytest.raises(DocumentError):
+        service.adopt_audit_checkpoint(
+            plan=c["plan"], reason="Reviewed legacy history", signed_record=r
+        )
+    monkeypatch.setattr(documents, "save", original_save)
+    real_datetime = audit_baseline.datetime
+
+    class Later(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(tz) + timedelta(minutes=2)
+
+    monkeypatch.setattr(audit_baseline, "datetime", Later)
+    before = (c["root"] / "audit.log").read_bytes()
+    result = service.adopt_audit_checkpoint(
+        plan=c["plan"], reason="Reviewed legacy history", signed_record=r
+    )
+    assert result["resumed"] is True
+    assert (c["root"] / "audit.log").read_bytes() == before
+
+
+def test_request_cli_does_not_access_keys(legacy, monkeypatch):
+    c = legacy
+    path = c["root"] / "plan.json"
+    path.write_text(json.dumps(c["plan"]))
+    monkeypatch.setattr(documents, "_signing_key", lambda *_: pytest.fail("key access"))
+    out = CliRunner().invoke(
+        main,
+        [
+            "audit-checkpoint-request",
+            "--root",
+            str(c["root"]),
+            "--org-yaml",
+            str(c["policy"]),
+            "--actor",
+            "custodian",
+            "--plan",
+            str(path),
+            "--reason",
+            "Reviewed legacy history",
+        ],
+    )
+    assert out.exit_code == 0, out.output
+    assert json.loads(out.output)["plan"] == c["plan"]
+
+
+@posix
+def test_external_cli_ignores_environment_key_and_preserves_originals(
+    legacy, monkeypatch
+):
+    c = legacy
+    record = _external_fixture(c)
+    rp, pp = c["root"] / "record.json", c["root"] / "plan.json"
+    rp.write_text(json.dumps(record))
+    pp.write_text(json.dumps(c["plan"]))
+    monkeypatch.setenv("PHANTOMDOCS_NSEC", "invalid-secret-must-not-be-read")
+    monkeypatch.setattr(documents, "_signing_key", lambda *_: pytest.fail("key access"))
+    args = [
+        "adopt-audit-checkpoint",
+        "--root",
+        str(c["root"]),
+        "--org-yaml",
+        str(c["policy"]),
+        "--actor",
+        "custodian",
+        "--plan",
+        str(pp),
+        "--reason",
+        "Reviewed legacy history",
+        "--signed-record",
+        str(rp),
+    ]
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["preserved_entries"] == 3
+    assert c["blob"].read_bytes() == b"Fictional legacy document"
+
+
+@posix
+@pytest.mark.parametrize("change", ["policy", "manifest", "authority", "reason", "key"])
+def test_external_apply_rechecks_authority_and_entire_snapshot(legacy, change):
+    c = legacy
+    record = _external_fixture(c)
+    service = _external_service(c)
+    reason = "Reviewed legacy history"
+    if change in ("policy", "authority", "key"):
+        org = copy.deepcopy(c["org"])
+        if change == "policy":
+            org["organization"]["name"] = "New policy snapshot"
+        elif change == "authority":
+            org["actors"][0]["role"] = "worker"
+        else:
+            org["actors"][0]["npub"] = signing.npub_encode(
+                signing.pubkey_from_nsec(coincurve.PrivateKey().secret.hex())
+            )
+        c["policy"].write_text(yaml.safe_dump(org))
+    elif change == "manifest":
+        data = copy.deepcopy(c["data"])
+        data["nodes"][0]["meta"]["review"] = "changed"
+        c["manifest"].write_text(yaml.safe_dump(data))
+    else:
+        reason = "Different reason"
+    before = c["manifest"].read_bytes()
+    with pytest.raises(DocumentError):
+        service.adopt_audit_checkpoint(
+            plan=c["plan"], reason=reason, signed_record=record
+        )
+    assert c["manifest"].read_bytes() == before
+    assert (c["root"] / "audit.log").read_bytes() == c["audit_before"]
+
+
+def test_external_reader_refuses_ambiguous_or_oversized_records(legacy):
+    path = legacy["root"] / "record.json"
+    path.write_text('{"payload":{},"payload":{}}')
+    with pytest.raises(ValueError, match="duplicate"):
+        audit_baseline.read_signed_checkpoint(str(path))
+    path.write_bytes(b" " * 65537)
+    with pytest.raises(ValueError, match="64 KiB"):
+        audit_baseline.read_signed_checkpoint(str(path))
+    record = _external_fixture(legacy)
+    path.write_text(json.dumps(record))
+    assert audit_baseline.read_signed_checkpoint(str(path)) == record
