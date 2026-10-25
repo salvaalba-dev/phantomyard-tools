@@ -57,12 +57,17 @@ actual declared file hashes for deployment review without activating tools.
 
 ## Usage
 
-Legacy namespaces with a non-empty audit log and no committed checkpoint must
-complete [explicit signed checkpoint adoption](docs/AUDIT-BASELINE.md) before
-ordinary mutations. `pd audit-checkpoint-plan` is read-only;
+Legacy namespaces with a non-empty audit log and no committed checkpoint need
+an explicit reviewed migration before ordinary mutations. Unsigned, unsealed
+stores under a trusted local administrator can use the one-time
+[local migration utility](contrib/LEGACY-CHECKPOINT.md), without a persona key or
+PhantomBot change. [Signed checkpoint adoption](docs/AUDIT-BASELINE.md) remains
+available when cryptographic adoption evidence is required.
+`pd audit-checkpoint-plan` is read-only;
 `pd adopt-audit-checkpoint` requires a reviewed unchanged plan, native
-administrative authority and the actor's existing signing key. It preserves old
-history and does not sign old documents or change their access categories.
+administrative authority and either a configured signing key or a verified
+external signature. Both migration paths preserve old history without signing
+old documents or changing their access categories.
 
 ```bash
 # Create a namespace (or derive it from a PhantomOrg org model)

@@ -5,6 +5,12 @@ committed position. Ordinary mutations and recovery refuse it rather than
 discarding its history. Checkpoint adoption is an explicit migration for this
 case, not document reclassification or ordinary crash recovery.
 
+For an unsigned, unsealed legacy store whose operator explicitly trusts local
+administration, a separate [one-time local migration](../contrib/LEGACY-CHECKPOINT.md)
+preserves history without a signature or PhantomBot integration. It is not a
+runtime requirement for PhantomView. The signed operation documented below
+remains unchanged and is not silently downgraded to that local mode.
+
 ## Review first
 
 Use the installed native CLI and the authoritative PhantomOrg model:
