@@ -54,6 +54,55 @@ owners, content and existing signatures are unchanged. Unsigned historical
 documents and entries remain unsigned: the new signature attests only to the
 checkpoint adoption, not to historical authorship.
 
+## Detached signing integration
+
+An external runtime can retain its private key while PhantomDocs prepares and
+verifies the fixed checkpoint operation. First create the reviewed plan as above,
+then prepare a fresh request against the unchanged authoritative inputs:
+
+```bash
+pd audit-checkpoint-request --root ./docs --org-yaml ./org.yaml \
+  --actor custodian --plan checkpoint-plan.json \
+  --reason "Adopt reviewed legacy history" > checkpoint-request.json
+```
+
+This command does not load a signing key or write to the namespace. Its output
+is the exact closed payload used by the existing signature format. It accepts no
+caller-supplied digest. Preparing a request does not authorize a runtime to sign
+it: the integration must authenticate its operator, independently bind the
+approved organization, actor and complete request, and refuse arbitrary signing.
+
+The runtime returns exactly `payload`, `sigPubkey` and `sig`. The payload must be
+unchanged. The signature is the existing Schnorr mutation signature over
+`mutation_message(_envelope(payload))`, including both existing domain prefixes.
+A Nostr access-link signature is not a substitute. No runtime adapter, signing
+socket, HTTP service or PhantomBot change is shipped by this receiver feature.
+
+Once that adapter has been separately reviewed and tested, apply its response:
+
+```bash
+pd adopt-audit-checkpoint --root ./docs --org-yaml ./org.yaml \
+  --actor custodian --plan checkpoint-plan.json \
+  --reason "Adopt reviewed legacy history" --signed-record checkpoint-signed.json
+```
+
+External mode never resolves `PHANTOMDOCS_NSEC` and cannot be combined with
+`--nsec-file`. Direct library users must instantiate `DocumentService` with
+`signing_key_from_environment=False` and no key file, then supply `signed_record`
+to `adopt_audit_checkpoint`. Local key-file signing remains supported unchanged.
+
+The record reader rejects duplicate fields and files larger than 64 KiB.
+Application rechecks current administrator authority, full source guards, the
+signature, the exact plan/reason/actor, and key validity both now and at issue
+time under the writer lock. A fresh external signature must be within 60 seconds
+of the host clock. This freshness check applies only before the first append;
+retrying the identical pending or committed record may complete after that
+window. Changed durable evidence is refused, never replaced by a new signature.
+
+Request and response files contain no private key, but expose operational
+identifiers and digests: keep them private. This feature does not approve or
+activate any deployment or alter the trusted local-writer boundary.
+
 ## Interrupted operations and verification
 
 - Before a complete audit append: the manifest stays unchanged. A clean failure

@@ -196,12 +196,18 @@ class DocumentService:
         org_yaml_path: str,
         actor_id: str,
         nsec_file: str | None = None,
+        *,
+        signing_key_from_environment: bool = True,
     ):
         self.root = root
         self.org_yaml_path = org_yaml_path
         self.org = self._load_org(org_yaml_path)
         self.actor_id = self._require_declared_actor(actor_id)
-        self.nsec = _signing_key(nsec_file)
+        self.nsec = (
+            _signing_key(nsec_file)
+            if nsec_file or signing_key_from_environment
+            else None
+        )
         self.policy_hash = policy_hash(self.org)
         self._bind_key_to_actor()
 
@@ -432,11 +438,13 @@ class DocumentService:
         except ManifestError as exc:
             raise DocumentError(str(exc))
 
-    def adopt_audit_checkpoint(self, *, plan, reason):
+    def adopt_audit_checkpoint(self, *, plan, reason, signed_record=None):
         """Adopt reviewed legacy audit bytes; signing and admin authority required."""
         from .audit_baseline import adopt_checkpoint
 
-        return adopt_checkpoint(self, plan=plan, reason=reason)
+        return adopt_checkpoint(
+            self, plan=plan, reason=reason, signed_record=signed_record
+        )
 
     def _sign_fields(
         self,
