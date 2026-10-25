@@ -158,7 +158,7 @@ def review(root: str, org_path: str, actor: str, **intent) -> dict[str, Any]:
 
 def read_plan(path: str) -> dict[str, Any]:
     """Bounded, duplicate-free JSON; application validates against current state."""
-    plan = _read_private_json(path)
+    plan = _read_private_json(path, label="classification plan")
     _check_plan(plan)
     return plan
 

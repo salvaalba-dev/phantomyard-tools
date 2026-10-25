@@ -549,3 +549,80 @@ def test_cli_apply_uses_native_local_transaction(case):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["versions_reclassified"] == 2
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        (
+            "sealKeys",
+            [
+                {
+                    "npub": "npub1sample",
+                    "valid_from": "2026-01-01T00:00:00Z",
+                    "delegation": "b" * 128,
+                }
+            ],
+        ),
+        (
+            "revocations",
+            [
+                {
+                    "n": 0,
+                    "npub": "npub1sample",
+                    "revoked_at": "2026-01-01T00:00:00Z",
+                    "prevHash": "a" * 64,
+                    "delegation": "b" * 128,
+                }
+            ],
+        ),
+        ("profileTransition", {"mode": "unsigned", "seq": 0}),
+    ],
+)
+def test_crypto_history_markers_refused_before_write(case, field, value):
+    data = copy.deepcopy(case["data"])
+    data["manifest"][field] = value
+    assert manifest.validate(data) == []
+    _write(case, data)
+    before = _snapshot(case)
+    for operation in (_review, _apply):
+        with pytest.raises(ValueError):
+            operation(case)
+        assert _snapshot(case) == before
+
+
+def test_plan_exact_size_boundary_and_classification_errors(case):
+    path = case["root"] / "review.json"
+    raw = json.dumps(case["plan"], separators=(",", ":")).encode("utf-8")
+    assert len(raw) < 65536
+    path.write_bytes(raw + b" " * (65536 - len(raw)))
+    assert local.read_plan(str(path)) == case["plan"]
+    path.write_bytes(path.read_bytes() + b" ")
+    before = _snapshot(case)
+    result = _invoke(
+        case, "classification-local-apply", "--review", str(path), "--trusted-local"
+    )
+    assert result.exit_code != 0
+    assert "classification plan exceeds 64 KiB" in result.output
+    assert "checkpoint plan" not in result.output
+    assert _snapshot(case) == before
+    path.write_text('{"schema":"first","schema":"second"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate classification plan field"):
+        local.read_plan(str(path))
+
+
+def test_large_retained_version_plan_is_refused_without_truncation(case):
+    plan = copy.deepcopy(case["plan"])
+    plan["versions"] *= 1000
+    raw = json.dumps(plan, separators=(",", ":")).encode("utf-8")
+    assert len(raw) > 65536
+    path = case["root"] / "review.json"
+    path.write_bytes(raw)
+    before = _snapshot(case)
+    result = _invoke(
+        case, "classification-local-apply", "--review", str(path), "--trusted-local"
+    )
+    assert result.exit_code != 0
+    assert "classification plan exceeds 64 KiB" in result.output
+    assert path.read_bytes() == raw
+    assert _snapshot(case) == before
