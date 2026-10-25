@@ -215,6 +215,15 @@ review artifacts; successful planning is not approval to migrate. See
 [Classification transition preparation](docs/CLASSIFICATION-TRANSITIONS.md)
 for the checks, historical semantics and blockers before write support.
 
+## Local classification for unsigned stores
+
+`pd classification-local-plan` and `pd classification-local-apply --trusted-local`
+provide an explicit audited transition for trusted local unsigned stores.
+Every retained version receives the target category in one atomic commit;
+identities, originals, owners and content versions are preserved. Signed or
+sealed history is refused. See [Local classification](docs/LOCAL-CLASSIFICATION.md)
+for review, crash retry, trust boundaries and viewer publication requirements.
+
 ## Dependency
 
 **Category catalog contract:** every readable or writable category must be
