@@ -592,6 +592,71 @@ def classification_plan_command(
     click.echo(json.dumps(plan, indent=2, ensure_ascii=True))
 
 
+@main.command("classification-local-plan")
+@click.argument("ref")
+@click.option("--expected-mac", required=True, help="Expected current version MAC.")
+@click.option("--expected-category", required=True, help="Expected current category.")
+@click.option(
+    "--category", required=True, help="Target category for every retained version."
+)
+@click.option("--reason", required=True, help="Reason retained in the audit receipt.")
+@click.option("--org-yaml", required=True, help="Authoritative PhantomOrg org.yaml.")
+@click.option("--actor", default=None, help=_ACTOR_HELP)
+@click.option("--root", default=".", show_default=True, help="Local backend root.")
+def classification_local_plan(
+    ref, expected_mac, expected_category, category, reason, org_yaml, actor, root
+):
+    """Review a local unsigned classification change without modifying the store."""
+    from .local_classification import review
+
+    actor_id, _org = _require_acl(org_yaml, actor)
+    try:
+        result = review(
+            root,
+            org_yaml,
+            actor_id,
+            ref=ref,
+            expected_mac=expected_mac,
+            expected_category=expected_category,
+            target_category=category,
+            reason=reason,
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=True))
+
+
+@main.command("classification-local-apply")
+@click.option(
+    "--review",
+    "review_path",
+    required=True,
+    help="Previously reviewed local plan JSON.",
+)
+@click.option(
+    "--trusted-local",
+    is_flag=True,
+    help="Acknowledge the trusted local operator boundary.",
+)
+@click.option("--org-yaml", required=True, help="Authoritative PhantomOrg org.yaml.")
+@click.option("--actor", default=None, help=_ACTOR_HELP)
+@click.option("--root", default=".", show_default=True, help="Local backend root.")
+def classification_local_apply(review_path, trusted_local, org_yaml, actor, root):
+    """Reclassify all unsigned versions, preserving identities and append-only history."""
+    from .local_classification import apply, read_plan
+
+    if not trusted_local:
+        raise click.ClickException(
+            "--trusted-local is required; an actor flag is not authentication"
+        )
+    actor_id, _org = _require_acl(org_yaml, actor)
+    try:
+        result = apply(root, org_yaml, actor_id, read_plan(review_path))
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=True))
+
+
 @main.command()
 @click.argument("query")
 @click.option(
