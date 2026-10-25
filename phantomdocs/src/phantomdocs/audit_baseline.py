@@ -121,21 +121,21 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("invalid checkpoint plan unsigned-node count")
 
 
-def _read_private_json(path: str) -> dict[str, Any]:
+def _read_private_json(path: str, *, label: str = "checkpoint plan") -> dict[str, Any]:
     """Read a bounded, unambiguous private JSON review artifact."""
 
     def unique(pairs):
         result = {}
         for key, value in pairs:
             if key in result:
-                raise ValueError("duplicate checkpoint plan field")
+                raise ValueError(f"duplicate {label} field")
             result[key] = value
         return result
 
     with open(path, "rb") as stream:
         raw = stream.read(65537)
     if len(raw) > 65536:
-        raise ValueError("checkpoint plan exceeds 64 KiB")
+        raise ValueError(f"{label} exceeds 64 KiB")
     return json.loads(raw, object_pairs_hook=unique)
 
 

@@ -44,7 +44,9 @@ pd classification-local-apply --trusted-local --review /private/review.json \
 The plan is read-only and creates no lock file. It includes the full manifest
 digest, current document MAC, retained version/content hashes, owners, current
 policy digest, audit prefix digest, checkpoint and persona reader comparison.
-Reviewing a plan does not authorize applying it. Human/counterpart access and
+Before applying, review `reader_impact` for every persona gaining or losing
+access. The decision covers all retained versions and tags, not only the
+current edition. Reviewing a plan does not authorize applying it. Human/counterpart access and
 viewer publication are separate checks; the persona comparison does not prove
 either one.
 
@@ -53,6 +55,15 @@ the native writer lock it reloads the policy and store, checks both write grants
 and all guards, and refuses any stale or changed request. A changed unrelated
 record intentionally invalidates a plan because the manifest digest covers the
 whole namespace. Regenerate the plan; do not patch its guards manually.
+
+The UTF-8 JSON review file is limited to 64 KiB (65,536 bytes), including
+whitespace. This is an intentional bounded-input limit, not a version-count
+limit: serialized entry sizes vary. A document with a very large retained
+history can exceed it. The reader refuses the entire oversized plan before
+application; no versions are truncated or omitted. Compact serialization can
+remove formatting overhead without changing the plan. If the complete compact
+plan still exceeds the limit, stop for a separately reviewed limit extension;
+do not split the history, delete versions or edit the guards to bypass it.
 
 ## Category and history semantics
 
