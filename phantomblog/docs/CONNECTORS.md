@@ -200,12 +200,12 @@ memory drawer or allowlist is rewritten by this tool.
 - [PhantomTools contribution rules](https://github.com/phantomyard/phantomtools/blob/main/CONTRIBUTING.md)
 - [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
 
-## Local Facebook connector
+## Facebook Page connector
 
-The repository includes a focused [`facebook-connector`](../../facebook-connector/README.md).
-Register it directly in Phantombot, inject its Page token from the persona vault,
-and follow its read-only account acceptance steps before enabling publication.
-Use its documented `facebook_publish_article` mapping with `${content_hash}`
-(the approved article HTML SHA-256), `${idempotency_key}`, `${url}` and `${title}`.
-The connector returns boolean `ok` and a public `postId`. Its presence is not
-Facebook account access. PhantomBridge is not required.
+PhantomBlog supports any MCP connector that implements the documented mapping.
+An optional local Facebook Page connector can be registered separately; this tool
+does not bundle provider credentials or create account access. Use the connector's
+documented `facebook_publish_article` mapping with `${content_hash}` (the approved
+article HTML SHA-256), `${idempotency_key}`, `${url}` and `${title}`. The connector
+returns boolean `ok` and a public `postId`. Its presence is not Facebook account
+access. PhantomBridge is not required.

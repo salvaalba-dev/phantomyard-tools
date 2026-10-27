@@ -55,15 +55,11 @@ python tests/preview.py --port 8790
 
 ## Maintenance verification (2026-10-15)
 
-The fork-only branch was rebased onto `origin/main` at
-`e2c9ac19f71cbf8a97c023c171a201ce5e58e877`, retaining the two access-link commits
-and removing their out-of-scope CI workflow edit. That maintenance diff was limited
-to `phantomblog/`; no upstream repository was modified. A subsequently approved CI
-repair also changes `.github/workflows/phantomblog-ci.yml` and
-`.github/workflows/facebook-connector-ci.yml`: both select Python 3.11 and install
-the development extra before running PhantomBlog through pytest. This fixes the
-observed missing-pytest/coincurve discovery failures without skipping access tests.
-The PhantomBlog workflow also enforces the local Ruff and formatting checks.
+The access-link changes were verified against the current `main`. The PhantomBlog
+workflow selects Python 3.11, installs the development extra before running the
+full pytest suite, and enforces the local Ruff and formatting checks. This fixes
+the observed missing-pytest/coincurve discovery failures without skipping access
+tests.
 
 Commands run from `phantomblog/` in an isolated development environment:
 

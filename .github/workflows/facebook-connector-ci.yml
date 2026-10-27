@@ -1,10 +1,10 @@
 name: Facebook connector
 on:
   pull_request:
-    paths: ["facebook-connector/**", "phantomblog/**", ".github/workflows/facebook-connector-ci.yml"]
+    paths: ["facebook-connector/**", ".github/workflows/facebook-connector-ci.yml"]
   push:
     branches: [main]
-    paths: ["facebook-connector/**", "phantomblog/**", ".github/workflows/facebook-connector-ci.yml"]
+    paths: ["facebook-connector/**", ".github/workflows/facebook-connector-ci.yml"]
 permissions:
   contents: read
 jobs:
@@ -22,12 +22,6 @@ jobs:
       - name: Synthetic connector tests
         working-directory: facebook-connector
         run: python -m unittest discover -s tests -v
-      - name: Install PhantomBlog test and signed-access dependencies
-        working-directory: phantomblog
-        run: python -m pip install ".[dev]"
-      - name: PhantomBlog integration tests
-        working-directory: phantomblog
-        run: python -m pytest tests -q
       - name: Compile connector
         working-directory: facebook-connector
         run: python -m compileall -q facebook_connector
