@@ -277,6 +277,8 @@ def reconcile(root: str, expected_count: int, expected_head: str | None) -> int:
     head) is evidence of tampering or manual edits, not a crash; it raises
     ``ValueError`` and the log is left untouched (fail-closed).
 
+    The checkpoint itself is validated before the log is read or truncated.
+
     Returns the number of orphaned entries discarded (0 when already
     consistent).
     """

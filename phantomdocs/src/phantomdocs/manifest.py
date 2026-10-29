@@ -467,7 +467,8 @@ def validate(data: dict[str, Any]) -> list[str]:
     ):
         errors.append("manifest.cryptoVersion must be an integer")
     # Head/anchor fields are optional (older manifests lack them) but, when
-    # present, must have the right shape so verify can trust them.
+    # present, must have the right shape so verify can trust them. ``bool`` is
+    # an ``int`` subclass, so require the exact type rather than coercion.
     for field in ("headSeq", "auditSeq", "sealedHeadSeq"):
         value = m.get(field)
         if value is not None and (type(value) is not int or value < 0):
