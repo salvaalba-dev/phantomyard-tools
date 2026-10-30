@@ -160,7 +160,7 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
                 not isinstance(owner, str) for owner in node["owners"]
             ):
                 raise WorkflowError("invalid native reference ownership")
-            for location in node.get("locations", []):
+            for location in node.get("locations") or []:
                 try:
                     uri = location_uri(location)
                 except (TypeError, AttributeError, ValueError) as error:
@@ -174,7 +174,7 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
             row["reason"] = "outside-declared-inbox"
         elif item.get("trashed", False):
             row["reason"] = "trashed-source"
-        elif item["mimeType"].startswith("application/vnd.google-apps."):
+        elif item["mimeType"].lower().startswith("application/vnd.google-apps."):
             row["reason"] = "native-cloud-object-needs-separate-export-review"
         elif (
             not all(k in item for k in ("size", "version", "md5Checksum"))

@@ -157,6 +157,10 @@ def test_scan_never_reads_reference_bytes(system, monkeypatch):
             {"mimeType": "application/vnd.google-apps.spreadsheet"},
             "native-cloud-object-needs-separate-export-review",
         ),
+        (
+            {"mimeType": "Application/VND.Google-Apps.Spreadsheet"},
+            "native-cloud-object-needs-separate-export-review",
+        ),
         ({"size": "0"}, "incomplete-binary-fingerprint"),
     ],
 )
@@ -188,6 +192,12 @@ def test_existing_reference_has_no_new_job_or_content_claim(system):
     assert row["state"] == "indexed-reference" and row["urn"] == node["urn"]
     assert row["content_reverified"] is False and row["requires_current_content_check"]
     assert "job" not in row
+
+
+def test_null_existing_locations_are_treated_as_no_locations(system):
+    node = index(system)
+    node["locations"] = None
+    assert scan(*system)["items"][0]["state"] == "planned"
 
 
 @pytest.mark.parametrize(
