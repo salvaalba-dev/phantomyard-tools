@@ -176,6 +176,10 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
             row["reason"] = "trashed-source"
         elif item["mimeType"].lower().startswith("application/vnd.google-apps."):
             row["reason"] = "native-cloud-object-needs-separate-export-review"
+        elif item["name"].casefold().endswith(".intake-request.json"):
+            # A control-file naming convention is only a reason to hold, not
+            # evidence of authorization or of the file's contents.
+            row["reason"] = "possible-intake-control-file-needs-review"
         elif (
             not all(k in item for k in ("size", "version", "md5Checksum"))
             or int(item["size"]) == 0
@@ -224,6 +228,7 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
                     k: item[k] for k in ("size", "version", "md5Checksum", "mimeType")
                 },
                 document_version=None,
+                requires_semantic_identity_check=True,
             )
         rows.append(row)
     result = {

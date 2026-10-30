@@ -16,7 +16,9 @@ For one explicitly configured inbox and document context, the command:
 3. Produces one `reference-document` proposal for each eligible binary original.
 4. Reports existing references across native history without making another job.
 5. Holds foreign-inbox objects, incomplete fingerprints, trashed objects, native
-   cloud documents requiring export, and conflicting existing identities/policies.
+   cloud documents requiring export, possible `.intake-request.json` control
+   files, and conflicting existing identities/policies. A control-file name is
+   only a reason to hold for review, not proof of its contents or authorization.
 
 The native destination folder must already exist. The operator supplies the
 domain, document type and requesting domain explicitly; filenames never choose
@@ -94,6 +96,13 @@ known. It has `content_reverified: false` and
 current version has been verified. Classification/ownership conflicts are held;
 the scanner never silently reclassifies a document or creates a second identity.
 Native structural validation is not cryptographic or content verification.
+
+Reference matching uses the exact provider reference. A copy of an indexed
+document can have a different reference and may therefore be proposed as new.
+Every new proposal reports `requires_semantic_identity_check: true`: an operator
+or execution adapter must check trusted provenance and current content before
+deciding whether it represents a new document, version or format. Neither a
+matching filename nor matching metadata alone proves identity.
 
 The generated job's requester is the authenticated **local planner**. No remote
 sender is authenticated, signature produced, ledger entry admitted, or existing

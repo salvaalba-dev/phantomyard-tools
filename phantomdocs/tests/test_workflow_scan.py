@@ -93,6 +93,7 @@ def test_uses_existing_policy_and_does_not_infer_document_version(system):
     assert row["job"]["requester"] == "coordinator"
     assert row["job"]["artifacts"][0]["role"] == "original"
     assert row["document_version"] is None and row["metadata"]["version"] == "29"
+    assert row["requires_semantic_identity_check"] is True
     assert not result["execution_ready"] and not row["plan"]["execution_ready"]
     assert (
         result["admission"]
@@ -162,6 +163,7 @@ def test_scan_never_reads_reference_bytes(system, monkeypatch):
             "native-cloud-object-needs-separate-export-review",
         ),
         ({"size": "0"}, "incomplete-binary-fingerprint"),
+        ({"name": "application.INTAKE-REQUEST.JSON"}, "possible-intake-control-file-needs-review"),
     ],
 )
 def test_unresolved_sources_are_held(system, change, reason):
@@ -192,6 +194,15 @@ def test_existing_reference_has_no_new_job_or_content_claim(system):
     assert row["state"] == "indexed-reference" and row["urn"] == node["urn"]
     assert row["content_reverified"] is False and row["requires_current_content_check"]
     assert "job" not in row
+
+
+def test_different_reference_requires_identity_review_even_if_already_indexed(system):
+    node = index(system)
+    node["locations"] = [{"backend": "gdrive", "ref": "archived-file"}]
+    row = scan(*system)["items"][0]
+    assert row["state"] == "planned"
+    assert row["requires_semantic_identity_check"] is True
+    assert "urn" not in row
 
 
 def test_null_existing_locations_are_treated_as_no_locations(system):
