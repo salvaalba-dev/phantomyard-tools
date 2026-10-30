@@ -163,7 +163,10 @@ def test_scan_never_reads_reference_bytes(system, monkeypatch):
             "native-cloud-object-needs-separate-export-review",
         ),
         ({"size": "0"}, "incomplete-binary-fingerprint"),
-        ({"name": "application.INTAKE-REQUEST.JSON"}, "possible-intake-control-file-needs-review"),
+        (
+            {"name": "application.INTAKE-REQUEST.JSON"},
+            "possible-intake-control-file-needs-review",
+        ),
     ],
 )
 def test_unresolved_sources_are_held(system, change, reason):
