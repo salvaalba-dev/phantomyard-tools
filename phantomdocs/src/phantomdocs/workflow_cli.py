@@ -11,6 +11,7 @@ from .access import load_org
 from .documents import DocumentError, _signing_key
 from .workflow_ledger import WorkflowLedger
 from .workflow_requests import sign_request, verify_request
+from .workflow_scan import scan_command
 from .workflows import (
     WorkflowError,
     dependency_graph,
@@ -28,6 +29,9 @@ from .workflows import (
 @click.group()
 def workflow():
     """Plan, accept, prepare and index explicitly configured workflows."""
+
+
+workflow.add_command(scan_command)
 
 
 @workflow.command("validate")

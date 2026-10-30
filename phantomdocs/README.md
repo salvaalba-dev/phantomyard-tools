@@ -54,6 +54,9 @@ The [installed processing adapter](docs/WORKFLOW-PROCESSING.md) adds explicit
 `pd workflow prepare` with private staging and pinned tool/resource checks.
 A [read-only runtime inventory](docs/WORKFLOW-RUNTIME-INVENTORY.md) observes
 actual declared file hashes for deployment review without activating tools.
+The [general inbox scan](docs/WORKFLOW-INBOX-SCAN.md) converts complete metadata
+inventories into read-only reference-document proposals through the existing
+planner. It holds unresolved entries and does not admit, index, publish or clean up.
 
 ## Usage
 
