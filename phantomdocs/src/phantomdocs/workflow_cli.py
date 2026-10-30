@@ -9,6 +9,7 @@ import click
 
 from .access import load_org
 from .documents import DocumentError, _signing_key
+from .workflow_drive_inventory import inventory_command
 from .workflow_ledger import WorkflowLedger
 from .workflow_requests import sign_request, verify_request
 from .workflow_scan import scan_command
@@ -32,6 +33,7 @@ def workflow():
 
 
 workflow.add_command(scan_command)
+workflow.add_command(inventory_command)
 
 
 @workflow.command("validate")
