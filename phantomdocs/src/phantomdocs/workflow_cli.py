@@ -36,6 +36,21 @@ workflow.add_command(scan_command)
 workflow.add_command(inventory_command)
 
 
+def _require_local_job_actor(store, organization, request_id, caller, identity_map):
+    """Bind local-job CLI mutations to the current mapped OS account."""
+    row = store._find(organization, request_id)
+    if row is None:
+        raise WorkflowError("workflow record not found or inaccessible")
+    request = json.loads(row["request_json"])
+    if request.get("kind") == "trusted-local-document-job":
+        from .workflow_local_identity import resolve_local_actor
+
+        if identity_map is None or resolve_local_actor(identity_map) != caller:
+            raise WorkflowError("local workflow actor does not match local account")
+    elif request.get("kind") != "signed-document-job":
+        raise WorkflowError("unknown workflow request trust mode")
+
+
 @workflow.command("copy-link-review")
 @click.option("--root", required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
@@ -297,6 +312,62 @@ def accept_job(
         raise click.exceptions.Exit(2)
 
 
+@workflow.command("accept-local")
+@click.option("--job", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--identity-map", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option("--ledger", required=True, type=click.Path(dir_okay=False))
+@click.option("--installation", required=True, type=click.Path(dir_okay=False))
+@click.option("--registry", default=None, type=click.Path(dir_okay=False))
+@click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--phantombot-config", required=True, type=click.Path(dir_okay=False))
+@click.option("--phantombot-state", default=None, type=click.Path(dir_okay=False))
+@click.option("--replan", is_flag=True)
+def accept_local_job(
+    job,
+    identity_map,
+    ledger,
+    installation,
+    registry,
+    org_yaml,
+    phantombot_config,
+    phantombot_state,
+    replan,
+):
+    """Admit a local service's own job; this does not authenticate a human."""
+    from .cli import _require_acl
+    from .workflow_local_identity import resolve_local_actor
+
+    try:
+        actor = resolve_local_actor(identity_map)
+        caller, org = _require_acl(org_yaml, actor)
+        job_data = read_json(job)
+        validate_job(job_data)
+        if job_data["requester"] != caller:
+            raise WorkflowError("local requester must be the trusted local caller")
+
+        def build(value):
+            return plan(
+                value,
+                read_json(installation),
+                org,
+                load_registry(registry),
+                resolve_processor(phantombot_config, phantombot_state),
+                caller,
+            )
+
+        with WorkflowLedger(ledger) as store:
+            result = store.accept_local(job_data, org, caller, build, replan=replan)
+    except WorkflowError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+        raise click.ClickException("cannot accept local workflow request") from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    if result["state"] == "blocked":
+        raise click.exceptions.Exit(2)
+
+
 @workflow.command("status")
 @click.option("--request-id", required=True)
 @click.option("--ledger", required=True, type=click.Path(exists=True, dir_okay=False))
@@ -362,6 +433,9 @@ def results_manifest(request_id, ledger, org_yaml, actor):
 )
 @click.option("--max-reference-bytes", required=True, type=click.IntRange(min=1))
 @click.option("--nsec-file", default=None, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--identity-map", default=None, type=click.Path(exists=True, dir_okay=False)
+)
 def index_archived(
     receipt,
     ledger,
@@ -371,6 +445,7 @@ def index_archived(
     drive_token_file,
     max_reference_bytes,
     nsec_file,
+    identity_map,
 ):
     """Verify an archiver receipt and index its existing Drive objects by reference."""
     from .cli import _require_acl
@@ -379,11 +454,19 @@ def index_archived(
 
     try:
         caller, org = _require_acl(org_yaml, actor)
-        reader = DriveArchiveReader(drive_token_file, max_bytes=max_reference_bytes)
+        receipt_data = read_json(receipt)
         with WorkflowLedger(ledger) as store:
+            _require_local_job_actor(
+                store,
+                receipt_data["organization"],
+                receipt_data["request_id"],
+                caller,
+                identity_map,
+            )
+            reader = DriveArchiveReader(drive_token_file, max_bytes=max_reference_bytes)
             result = index_archive(
                 store,
-                read_json(receipt),
+                receipt_data,
                 org,
                 caller,
                 root=root,
@@ -452,6 +535,9 @@ def archive_receipt(request_id, mapping, ledger, org_yaml, actor):
 @click.option(
     "--drive-token-file", required=True, type=click.Path(exists=True, dir_okay=False)
 )
+@click.option(
+    "--identity-map", default=None, type=click.Path(exists=True, dir_okay=False)
+)
 def prepare_job(
     request_id,
     ledger,
@@ -462,6 +548,7 @@ def prepare_job(
     phantombot_config,
     phantombot_state,
     drive_token_file,
+    identity_map,
 ):
     """Run explicitly pinned processing; leave publication/indexing to the archiver."""
     from .cli import _require_acl
@@ -485,6 +572,9 @@ def prepare_job(
             )
 
         with WorkflowLedger(ledger) as store:
+            _require_local_job_actor(
+                store, org["organization"]["id"], request_id, caller, identity_map
+            )
             planned = store.status(org["organization"]["id"], request_id, org, caller)[
                 "plan"
             ]

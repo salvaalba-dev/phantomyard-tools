@@ -14,9 +14,9 @@ import stat
 from copy import deepcopy
 from pathlib import Path
 
-from .access import can_read, can_write
+from .access import can_read, can_write, validate_org_schema
 from .workflow_requests import utc_now, utc_text, verify_request
-from .workflows import WorkflowError, digest
+from .workflows import WorkflowError, digest, validate_job
 
 LEDGER_VERSION = 1
 
@@ -201,6 +201,27 @@ class WorkflowLedger:
         request = deepcopy(request)
         now = now or utc_now()
         job = verify_request(request, org, now)
+        return self._accept_verified(request, job, org, caller, make_plan, replan, now)
+
+    def accept_local(self, job, org, caller, make_plan, *, replan=False, now=None):
+        """Accept intent from an explicitly trusted local caller, not a remote sender.
+
+        The integration invoking this API must authenticate and bind ``caller``.
+        A caller-supplied name alone does not authenticate an OS account or human.
+        """
+        job = deepcopy(job)
+        validate_job(job)
+        validate_org_schema(org)
+        if org.get("organization", {}).get("id") != job["organization"]:
+            raise WorkflowError("request organization mismatch")
+        if caller != job["requester"]:
+            raise WorkflowError("local requester must be the trusted local caller")
+        envelope = {"kind": "trusted-local-document-job", "version": 1, "job": job}
+        return self._accept_verified(
+            envelope, job, org, caller, make_plan, replan, now or utc_now()
+        )
+
+    def _accept_verified(self, request, job, org, caller, make_plan, replan, now):
         organization, request_id, job_hash = (
             job["organization"],
             job["request_id"],
@@ -211,6 +232,12 @@ class WorkflowLedger:
             existing = self._find(organization, request_id)
             if existing:
                 self._authorize(self._plan(existing), org, caller, True)
+                if json.loads(existing["request_json"]).get("kind") != request.get(
+                    "kind"
+                ):
+                    raise WorkflowError(
+                        "request id already exists under a different trust mode"
+                    )
                 if existing["job_hash"] != job_hash:
                     raise WorkflowError(
                         "request id already exists with different intent"
@@ -299,7 +326,12 @@ class WorkflowLedger:
                 (
                     organization,
                     request_id,
-                    "replanned" if existing else "accepted",
+                    ("replanned" if existing else "accepted")
+                    + (
+                        "-local"
+                        if request["kind"] == "trusted-local-document-job"
+                        else ""
+                    ),
                     caller,
                     expected_hash,
                     timestamp,

@@ -15,9 +15,9 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
-from .access import key_valid_at
+from .access import key_valid_at, validate_org_schema
 from .workflow_requests import parse_time, utc_now, utc_text, verify_request
-from .workflows import WorkflowError, digest, reference_is_safe
+from .workflows import WorkflowError, digest, reference_is_safe, validate_job
 
 
 @contextmanager
@@ -221,11 +221,35 @@ class WorkflowExecutor:
                     raise WorkflowError("only the pinned processor can execute")
                 stored = self.ledger._find(organization, request_id)
                 signed = json.loads(stored["request_json"])
-                job = verify_request(signed, org, parse_time(signed["issued_at"]))
-                if not key_valid_at(
-                    org, job["requester"], signed["signer_pubkey"], utc_text(utc_now())
-                ):
-                    raise WorkflowError("requester key is no longer valid")
+                if signed.get("kind") == "trusted-local-document-job":
+                    if (
+                        set(signed) != {"kind", "version", "job"}
+                        or type(signed["version"]) is not int
+                        or signed["version"] != 1
+                    ):
+                        raise WorkflowError("invalid local workflow envelope")
+                    job = signed["job"]
+                    validate_job(job)
+                    validate_org_schema(org)
+                    if (
+                        job["organization"] != organization
+                        or job["request_id"] != request_id
+                        or job["requester"] != stored["requester"]
+                        or digest(job) != stored["job_hash"]
+                    ):
+                        raise WorkflowError(
+                            "local workflow intent does not match ledger"
+                        )
+                    self.ledger._authorize(planned, org, job["requester"], True)
+                else:
+                    job = verify_request(signed, org, parse_time(signed["issued_at"]))
+                    if not key_valid_at(
+                        org,
+                        job["requester"],
+                        signed["signer_pubkey"],
+                        utc_text(utc_now()),
+                    ):
+                        raise WorkflowError("requester key is no longer valid")
                 current = rebuild_plan(job)
                 if (
                     current["plan_hash"] != planned["plan_hash"]
