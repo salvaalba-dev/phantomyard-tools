@@ -13,7 +13,7 @@ from .local_classification import _header_valid, _unsigned
 from .storage import location_uri
 from .workflow_provenance_plan import prepare_link
 from .workflow_receipt_store import read_receipt, trusted_receipt_directory
-from .workflow_reconcile import review_receipt
+from .workflow_reconcile import metadata_unchanged, review_receipt
 from .workflows import reference_is_safe
 
 ACTION = "intake-link-local"
@@ -91,6 +91,7 @@ def links_for_scan(root, data, org, actor):
     _unsigned(data, rows)
     _header_valid(data["manifest"], lines, rows)
     links = {}
+    current_policy_hash = policy_hash(org)
     for row in rows:
         if row.get("action") != ACTION:
             continue
@@ -142,8 +143,12 @@ def links_for_scan(root, data, org, actor):
             raise ValueError("inconsistent local intake link")
         if ref in links:
             raise ValueError("ambiguous local intake link")
-        if can_read(org, actor, node["category"]) and can_read(
-            org, actor, current["category"]
+        if (
+            details["policy_hash"] == current_policy_hash
+            and current.get("mac") == node.get("mac")
+            and current.get("contentHash") == node.get("contentHash")
+            and can_read(org, actor, node["category"])
+            and can_read(org, actor, current["category"])
         ):
             links[ref] = {"node": current, "inbox_name": details["inbox_name"]}
         else:
@@ -173,16 +178,7 @@ def _matches(row, plan, actor):
     )
 
 
-def apply(
-    root, org_path, actor, plan, *, receipt_directory, receipt_name, inbox_name, reader
-):
-    """Experimental unsigned operation; operator selects the receipt directory.
-
-    This is not exposed as a command or connected to production. Private
-    custody does not authenticate the original producer. The trusted local
-    operator must review the claim; this is not remote authentication.
-    """
-    plan = copy.deepcopy(plan)
+def _checked_state(root, path, org_path, actor, plan, inbox_name):
     link = plan["link"]
     if link["actor"] != actor:
         raise ValueError("actor differs from reviewed plan")
@@ -190,60 +186,98 @@ def apply(
         raise ValueError("inbox differs from reviewed plan")
     intent = {k: link[k] for k in ("urn", "inbox_ref", "archive_ref")}
     intent["sha256"] = link["content_sha256"]
+    data = manifest.load(path)
+    lines, rows = _audit_state(root)
+    count = plan["audit_count"]
+    pending = len(lines) == count + 1 and _matches(rows[-1], plan, actor)
+    if len(lines) != count and not pending:
+        raise ValueError("stale or unknown audit tail")
+    prefix = lines[:count]
+    if (
+        _hash(b"".join(prefix)) != plan["audit_digest"]
+        or (_hash(prefix[-1]) if prefix else None) != plan["audit_head"]
+    ):
+        raise ValueError("reviewed audit prefix changed")
+    before = copy.deepcopy(data)
+    committed = False
+    if pending and data["manifest"] != plan["header"]:
+        _header_valid(data["manifest"], lines, rows)
+        expected = copy.deepcopy(plan["header"])
+        expected.update(
+            headSeq=plan["next_seq"], auditSeq=count + 1, auditHead=_hash(lines[-1])
+        )
+        if data["manifest"] != expected:
+            raise ValueError("checkpoint changed")
+        before["manifest"] = copy.deepcopy(plan["header"])
+        committed = True
+    org = load_org(org_path)
+    fresh = _proposal(before, org, actor, prefix, rows[:count], intent, inbox_name)
+    if _canonical(fresh) != _canonical(plan):
+        raise ValueError("stale provenance plan")
+    return data, lines, pending, committed, org
+
+
+def _read_matching_receipt(directory, name, link):
+    with trusted_receipt_directory(directory) as receipt_dir_fd:
+        receipt = read_receipt(receipt_dir_fd, name)
+    if receipt != {
+        "inbox_ref": link["inbox_ref"],
+        "archive_ref": link["archive_ref"],
+        "sha256": link["content_sha256"],
+    }:
+        raise ValueError("receipt differs from reviewed link")
+    return receipt
+
+
+def apply(
+    root, org_path, actor, plan, *, receipt_directory, receipt_name, inbox_name, reader
+):
+    """Verify a local claim outside the lock; revalidate before audit append.
+
+    Local custody does not authenticate the original producer. Drive metadata
+    is rechecked under the lock, but Drive itself is not locked by this process.
+    """
+    plan = copy.deepcopy(plan)
+    link = plan["link"]
     path = str(Path(root) / manifest.MANIFEST_FILENAME)
-    with manifest.manifest_lock(path):
-        data = manifest.load(path)
-        lines, rows = _audit_state(root)
-        count = plan["audit_count"]
-        pending = len(lines) == count + 1 and _matches(rows[-1], plan, actor)
-        if len(lines) != count and not pending:
-            raise ValueError("stale or unknown audit tail")
-        prefix = lines[:count]
-        if (
-            _hash(b"".join(prefix)) != plan["audit_digest"]
-            or (_hash(prefix[-1]) if prefix else None) != plan["audit_head"]
-        ):
-            raise ValueError("reviewed audit prefix changed")
-        before = copy.deepcopy(data)
-        committed = False
-        if pending and data["manifest"] != plan["header"]:
-            _header_valid(data["manifest"], lines, rows)
-            expected = copy.deepcopy(plan["header"])
-            expected.update(
-                headSeq=plan["next_seq"], auditSeq=count + 1, auditHead=_hash(lines[-1])
+    data, _, _, committed, org = _checked_state(
+        root, path, org_path, actor, plan, inbox_name
+    )
+    if committed:
+        with manifest.manifest_lock(path):
+            _, _, _, still_committed, _ = _checked_state(
+                root, path, org_path, actor, plan, inbox_name
             )
-            if data["manifest"] != expected:
-                raise ValueError("checkpoint changed")
-            before["manifest"] = copy.deepcopy(plan["header"])
-            committed = True
-        org = load_org(org_path)
-        fresh = _proposal(before, org, actor, prefix, rows[:count], intent, inbox_name)
-        if _canonical(fresh) != _canonical(plan):
-            raise ValueError("stale provenance plan")
+            if not still_committed:
+                raise ValueError("committed link changed")
+            return {"unchanged": True, "seq": plan["next_seq"]}
+    receipt = _read_matching_receipt(receipt_directory, receipt_name, link)
+    observed = review_receipt(
+        receipt=receipt,
+        inbox_ref=link["inbox_ref"],
+        inbox_name=inbox_name,
+        org=org,
+        caller=actor,
+        manifest=data,
+        reader=reader,
+    )
+    if (
+        observed.get("reason") != "matching-evidence"
+        or observed.get("urn") != link["urn"]
+    ):
+        raise ValueError("current intake content not verified")
+    with manifest.manifest_lock(path):
+        data, lines, pending, committed, org = _checked_state(
+            root, path, org_path, actor, plan, inbox_name
+        )
         if committed:
             return {"unchanged": True, "seq": plan["next_seq"]}
-        with trusted_receipt_directory(receipt_directory) as receipt_dir_fd:
-            receipt = read_receipt(receipt_dir_fd, receipt_name)
-        if receipt != {
-            "inbox_ref": link["inbox_ref"],
-            "archive_ref": link["archive_ref"],
-            "sha256": link["content_sha256"],
-        }:
-            raise ValueError("receipt differs from reviewed link")
-        observed = review_receipt(
-            receipt=receipt,
-            inbox_ref=link["inbox_ref"],
-            inbox_name=inbox_name,
-            org=org,
-            caller=actor,
-            manifest=data,
-            reader=reader,
-        )
-        if (
-            observed.get("reason") != "matching-evidence"
-            or observed.get("urn") != link["urn"]
+        if _read_matching_receipt(receipt_directory, receipt_name, link) != receipt:
+            raise ValueError("receipt changed during verification")
+        if not metadata_unchanged(
+            reader, link["inbox_ref"], observed["observed_metadata"]
         ):
-            raise ValueError("current intake content not verified")
+            raise ValueError("intake metadata changed during verification")
         if policy_hash(load_org(org_path)) != link["policy_hash"]:
             raise ValueError("organization policy changed during verification")
         head = (
@@ -263,7 +297,7 @@ def apply(
             )
         )
         data["manifest"].update(
-            headSeq=plan["next_seq"], auditSeq=count + 1, auditHead=head
+            headSeq=plan["next_seq"], auditSeq=plan["audit_count"] + 1, auditHead=head
         )
         manifest.save(path, data)
         return {"unchanged": False, "resumed": pending, "seq": plan["next_seq"]}
