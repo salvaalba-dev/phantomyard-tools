@@ -433,6 +433,22 @@ def test_cli_does_not_write_inventory_manifest_or_create_ledger(
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["execution_ready"] is False
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+    from phantomdocs import workflow_provenance_audit
+
+    linked_node = index(system)
+    linked_node["locations"] = [{"backend": "gdrive", "ref": "archive-file"}]
+    paths["manifest.yaml"].write_text(yaml.safe_dump(system[6]), encoding="utf-8")
+    monkeypatch.setattr(
+        workflow_provenance_audit,
+        "links_for_scan",
+        lambda *_: {
+            "gdrive://example-file": {"node": linked_node, "inbox_name": "coordinator"}
+        },
+    )
+    linked = CliRunner().invoke(main, [*args, "--use-local-copy-links"])
+    assert linked.exit_code == 0, linked.output
+    linked_row = json.loads(linked.output)["items"][0]
+    assert linked_row["state"] == "linked-reference" and "job" not in linked_row
     system[0]["items"][0]["parents"] = ["other-inbox"]
     paths["inventory.json"].write_text(json.dumps(system[0]), encoding="utf-8")
     result = CliRunner().invoke(main, args)
