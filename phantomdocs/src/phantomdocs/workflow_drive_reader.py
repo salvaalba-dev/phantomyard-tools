@@ -67,7 +67,7 @@ class DriveArchiveReader:
             with self._open(
                 ref,
                 {
-                    "fields": "id,parents,size,trashed,md5Checksum,mimeType",
+                    "fields": "id,parents,size,version,trashed,md5Checksum,mimeType",
                     "supportsAllDrives": "true",
                 },
             ) as response:

@@ -122,7 +122,18 @@ def _inventory(value):
                 raise WorkflowError("invalid inventory fingerprint")
 
 
-def scan(inventory, installation, org, registry, processor, caller, manifest, context):
+def scan(
+    inventory,
+    installation,
+    org,
+    registry,
+    processor,
+    caller,
+    manifest,
+    context,
+    *,
+    local_links=None,
+):
     """Propose reference-document jobs without admission, byte reads or writes."""
     _inventory(inventory)
     if validate(manifest):
@@ -206,6 +217,28 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
                     content_reverified=False,
                     requires_current_content_check=True,
                 )
+        elif local_links is not None and ref in local_links:
+            entry = local_links[ref]
+            linked = entry["node"] if entry is not None else None
+            category, owners = (
+                policy["classification"]["category"],
+                policy["classification"]["owners"],
+            )
+            if (
+                linked is None
+                or entry["inbox_name"] != installation["intake"]["inbox"]
+                or normalize_category(linked["category"]) != category
+                or set(linked.get("owners") or []) != set(owners)
+                or linked["parentMac"] != parent["mac"]
+            ):
+                row["reason"] = "existing-reference-policy-or-identity-conflict"
+            else:
+                row.update(
+                    state="linked-reference",
+                    urn=linked["urn"],
+                    content_reverified=False,
+                    requires_current_content_check=True,
+                )
         else:
             job = deepcopy(base)
             job["request_id"] = "reference-" + digest(
@@ -275,6 +308,11 @@ def scan(inventory, installation, org, registry, processor, caller, manifest, co
 @click.option("--domain", required=True)
 @click.option("--document-type", required=True)
 @click.option("--requesting-domain", required=True)
+@click.option(
+    "--use-local-copy-links",
+    is_flag=True,
+    help="Read locally trusted audit links; current content is not checked.",
+)
 def scan_command(
     inventory,
     installation,
@@ -287,6 +325,7 @@ def scan_command(
     domain,
     document_type,
     requesting_domain,
+    use_local_copy_links,
 ):
     """Plan general inbox references from a complete metadata inventory; never execute."""
     from .cli import _load_or_die, _require_acl
@@ -294,6 +333,12 @@ def scan_command(
 
     try:
         caller, org = _require_acl(org_yaml, actor)
+        data = _load_or_die(root)
+        links = None
+        if use_local_copy_links:
+            from .workflow_provenance_audit import links_for_scan
+
+            links = links_for_scan(root, data, org, caller)
         result = scan(
             read_inventory(inventory),
             read_json(installation),
@@ -301,12 +346,13 @@ def scan_command(
             load_registry(registry),
             resolve_processor(phantombot_config, phantombot_state),
             caller,
-            _load_or_die(root),
+            data,
             {
                 "domain": domain,
                 "document_type": document_type,
                 "requesting_domain": requesting_domain,
             },
+            local_links=links,
         )
     except WorkflowError as error:
         raise click.ClickException(str(error)) from error

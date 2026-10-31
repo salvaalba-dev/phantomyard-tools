@@ -214,6 +214,35 @@ def test_null_existing_locations_are_treated_as_no_locations(system):
     assert scan(*system)["items"][0]["state"] == "planned"
 
 
+def test_locally_linked_copy_is_not_proposed_again(system):
+    node = index(system)
+    node["locations"] = [{"backend": "gdrive", "ref": "archive-file"}]
+    row = scan(
+        *system,
+        local_links={
+            "gdrive://example-file": {"node": node, "inbox_name": "coordinator"}
+        },
+    )["items"][0]
+    assert row["state"] == "linked-reference" and row["urn"] == node["urn"]
+    assert row["content_reverified"] is False and row["requires_current_content_check"]
+    assert "job" not in row
+
+
+def test_link_from_another_inbox_is_held(system):
+    node = index(system)
+    node["locations"] = [{"backend": "gdrive", "ref": "archive-file"}]
+    row = scan(
+        *system,
+        local_links={"gdrive://example-file": {"node": node, "inbox_name": "other"}},
+    )["items"][0]
+    assert row["state"] == "held" and "urn" not in row and "job" not in row
+
+
+def test_inaccessible_link_cannot_become_a_new_proposal(system):
+    row = scan(*system, local_links={"gdrive://example-file": None})["items"][0]
+    assert row["state"] == "held" and "urn" not in row and "job" not in row
+
+
 @pytest.mark.parametrize(
     "change",
     [{"category": "category-3"}, {"owners": ["custodian"]}, {"parentMac": "0" * 64}],

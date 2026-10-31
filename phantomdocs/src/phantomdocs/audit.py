@@ -330,6 +330,15 @@ def reconcile(root: str, expected_count: int, expected_head: str | None) -> int:
             "orphaned audit tail does not chain cleanly off the manifest's "
             "recorded head; refusing to recover (tampering?)"
         )
+    # Intake links are resumable evidence, not disposable orphaned mutations.
+    # Preserve even malformed link details for the dedicated recovery path.
+    for line in lines[expected_count:]:
+        try:
+            record = json.loads(line)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid orphaned audit entry; refusing recovery") from exc
+        if isinstance(record, dict) and record.get("action") == "intake-link-local":
+            raise ValueError("pending intake link requires explicit recovery")
     discarded = actual_count - expected_count
     truncate(root, expected_count)
     return discarded
