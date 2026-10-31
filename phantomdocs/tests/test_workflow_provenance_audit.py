@@ -4,7 +4,7 @@ import copy
 import json
 import multiprocessing
 import os
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import pytest
 import test_local_classification as fixtures
@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from phantomdocs import audit, cli, manifest
 from phantomdocs import workflow_provenance_audit as provenance_audit
+from phantomdocs.identity import doc_version_mac_from_hash
 from phantomdocs.workflow_provenance_audit import apply, links_for_scan, review
 
 
@@ -157,6 +158,75 @@ def test_changed_drive_metadata_writes_nothing(case):
     ) == before
 
 
+def test_download_does_not_hold_manifest_lock(case, monkeypatch):
+    proposal = plan(case)
+    lock = manifest.manifest_lock
+    held = {"value": False}
+
+    @contextmanager
+    def tracked(path):
+        with lock(path):
+            held["value"] = True
+            try:
+                yield
+            finally:
+                held["value"] = False
+
+    class CheckingReader(Reader):
+        def read_reference(self, ref, *, streaming):
+            assert held["value"] is False
+            return super().read_reference(ref, streaming=streaming)
+
+    monkeypatch.setattr(manifest, "manifest_lock", tracked)
+    assert (
+        execute(case, proposal, reader=CheckingReader(b"Second fictional version"))[
+            "unchanged"
+        ]
+        is False
+    )
+
+
+def test_audit_change_during_download_refuses_to_append(case):
+    proposal = plan(case)
+
+    class ChangingReader(Reader):
+        def read_reference(self, ref, *, streaming):
+            audit.append(
+                str(case["root"]),
+                "custodian",
+                "other",
+                case["current"]["urn"],
+                case["current"]["mac"],
+                None,
+                seq=proposal["next_seq"],
+            )
+            return super().read_reference(ref, streaming=streaming)
+
+    with pytest.raises(ValueError, match="stale or unknown audit tail"):
+        execute(case, proposal, reader=ChangingReader(b"Second fictional version"))
+    rows = [
+        json.loads(line)
+        for line in (case["root"] / "audit.log").read_bytes().splitlines()
+    ]
+    assert rows[-1]["action"] == "other"
+
+
+def test_provider_change_after_download_is_rejected(case):
+    proposal = plan(case)
+    before = (case["root"] / "audit.log").read_bytes()
+
+    class ChangingReader(Reader):
+        def metadata(self, ref):
+            result = super().metadata(ref)
+            if self.calls >= 3:
+                result["version"] = "2"
+            return result
+
+    with pytest.raises(ValueError, match="metadata changed"):
+        execute(case, proposal, reader=ChangingReader(b"Second fictional version"))
+    assert (case["root"] / "audit.log").read_bytes() == before
+
+
 def test_policy_changes_are_rejected(case):
     proposal = plan(case)
     org = yaml.safe_load(case["policy"].read_text(encoding="utf-8"))
@@ -203,6 +273,32 @@ def test_recorded_link_is_discoverable_only_for_authorized_reader(case):
     assert allowed["gdrive://inbox-copy"]["node"]["urn"] == case["current"]["urn"]
     hidden = links_for_scan(str(case["root"]), data, case["org"], "unknown")
     assert hidden["gdrive://inbox-copy"] is None
+
+
+def test_recorded_link_is_held_if_policy_changes(case):
+    execute(case, plan(case))
+    data = manifest.load(str(case["path"]))
+    changed = copy.deepcopy(case["org"])
+    changed["organization"]["display_name"] = "Changed policy context"
+    result = links_for_scan(str(case["root"]), data, changed, "custodian")
+    assert result["gdrive://inbox-copy"] is None
+
+
+def test_recorded_link_is_held_if_document_version_changes(case):
+    execute(case, plan(case))
+    data = manifest.load(str(case["path"]))
+    node = manifest.node_by_urn(data, case["current"]["urn"])
+    newer = copy.deepcopy(node)
+    newer["previous"] = node["mac"]
+    newer["contentHash"] = "a" * 64
+    newer["mac"] = doc_version_mac_from_hash(
+        newer["parentMac"], node["mac"], newer["slug"], newer["contentHash"]
+    )
+    data["nodes"].append(newer)
+    data["currentVersions"][node["urn"]] = newer["mac"]
+    data["manifest"]["headMac"] = newer["mac"]
+    result = links_for_scan(str(case["root"]), data, case["org"], "custodian")
+    assert result["gdrive://inbox-copy"] is None
 
 
 def test_unrelated_history_change_is_never_discarded(case):

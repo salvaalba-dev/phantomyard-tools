@@ -12,6 +12,25 @@ from .manifest import validate
 from .storage import location_uri
 from .workflows import WorkflowError, reference_is_safe
 
+OBSERVATION_FIELDS = (
+    "id",
+    "parents",
+    "size",
+    "version",
+    "trashed",
+    "md5Checksum",
+    "mimeType",
+)
+
+
+def metadata_unchanged(reader, inbox_ref, expected):
+    """Refresh provider metadata; the result is not an atomic Drive lock."""
+    reader.cache.pop(inbox_ref, None)
+    current = reader.metadata(inbox_ref)
+    return all(
+        current.get(field) == expected.get(field) for field in OBSERVATION_FIELDS
+    )
+
 
 def review_copy(
     *,
@@ -125,11 +144,15 @@ def review_receipt(*, receipt, inbox_ref, inbox_name, org, caller, manifest, rea
     # DriveArchiveReader caches metadata; force an independent final observation.
     reader.cache.pop(inbox_ref, None)
     after = reader.metadata(inbox_ref)
-    fields = ("id", "parents", "size", "version", "trashed", "md5Checksum", "mimeType")
-    if any(before.get(field) != after.get(field) for field in fields):
+    if any(before.get(field) != after.get(field) for field in OBSERVATION_FIELDS):
         return {
             "status": "review-required",
             "execution_ready": False,
             "reason": "inbox-metadata-changed",
         }
-    return review_copy(observed_sha256=sha.hexdigest(), **args)
+    result = review_copy(observed_sha256=sha.hexdigest(), **args)
+    if result["reason"] == "matching-evidence":
+        result["observed_metadata"] = {
+            field: after.get(field) for field in OBSERVATION_FIELDS
+        }
+    return result

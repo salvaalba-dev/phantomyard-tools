@@ -21,8 +21,11 @@ configuration or provider credentials are supplied by this prototype.
 The separate experimental local audit-link operation uses the existing manifest
 lock, audit chain and checkpoint. It records the document identity, inbox and
 archive references, content digest, actor, declared inbox and policy hash. It
-accepts only unsigned, unsealed stores, checks current content and policy again,
-and attempts to resume an interrupted audit-first commit without truncating the
+accepts only unsigned, unsealed stores, downloads outside the manifest lock,
+then reacquires the lock and rechecks the review plan, receipt, provider metadata
+and policy before appending. Provider metadata can change again after the final
+check; the local lock does not lock Drive. The operation attempts to resume an
+interrupted audit-first commit without truncating the
 log. Generic audit recovery refuses to discard a pending intake-link entry;
 the dedicated operation must reconcile it. The receipt is still an
 operator-supplied claim and is not authenticated.
@@ -59,4 +62,6 @@ operation deletes or moves inbox data or publishes to PhantomView.
 An authorized matching row is `linked-reference`, never a new job. It reports
 `content_reverified: false` and `requires_current_content_check: true`; the
 intake object could have changed since it was linked. Conflicts remain held.
+Policy changes or a different current document version hold the previous link
+for review, rather than silently associating it with the new state.
 Unsigned, unsealed, checkpointed local stores are required for this opt-in.
