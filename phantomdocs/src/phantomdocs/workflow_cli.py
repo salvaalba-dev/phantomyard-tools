@@ -36,6 +36,95 @@ workflow.add_command(scan_command)
 workflow.add_command(inventory_command)
 
 
+@workflow.command("copy-link-review")
+@click.option("--root", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--actor", default=None, help="Local actor, not remote authentication.")
+@click.option("--inbox-name", required=True)
+@click.option("--urn", required=True)
+@click.option("--inbox-ref", required=True)
+@click.option("--archive-ref", required=True)
+@click.option("--sha256", required=True)
+def copy_link_review(
+    root, org_yaml, actor, inbox_name, urn, inbox_ref, archive_ref, sha256
+):
+    """Create a read-only local audit-link plan; source bytes are not checked."""
+    from .cli import _require_acl
+    from .workflow_provenance_audit import review
+
+    try:
+        caller, _ = _require_acl(org_yaml, actor)
+        result = review(
+            root,
+            org_yaml,
+            caller,
+            inbox_name=inbox_name,
+            urn=urn,
+            inbox_ref=inbox_ref,
+            archive_ref=archive_ref,
+            sha256=sha256,
+        )
+    except WorkflowError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise click.ClickException("cannot prepare local copy-link review") from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@workflow.command("copy-link-apply")
+@click.option("--root", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--actor", default=None, help="Trusted local actor, not remote authentication."
+)
+@click.option(
+    "--plan", "plan_path", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--receipt-directory", required=True, type=click.Path(exists=True, file_okay=False)
+)
+@click.option("--receipt-name", required=True)
+@click.option(
+    "--drive-token-file", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option("--max-bytes", required=True, type=click.IntRange(min=1, max=1073741824))
+def copy_link_apply(
+    root,
+    org_yaml,
+    actor,
+    plan_path,
+    receipt_directory,
+    receipt_name,
+    drive_token_file,
+    max_bytes,
+):
+    """Revalidate a reviewed local claim and append its audit link once."""
+    from .audit_baseline import _read_private_json
+    from .cli import _require_acl
+    from .workflow_drive_reader import DriveArchiveReader
+    from .workflow_provenance_audit import apply
+
+    try:
+        caller, _ = _require_acl(org_yaml, actor)
+        reviewed = _read_private_json(plan_path, label="copy-link plan")
+        reader = DriveArchiveReader(drive_token_file, max_bytes=max_bytes)
+        result = apply(
+            root,
+            org_yaml,
+            caller,
+            reviewed,
+            receipt_directory=receipt_directory,
+            receipt_name=receipt_name,
+            inbox_name=reviewed["inbox_name"],
+            reader=reader,
+        )
+    except WorkflowError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise click.ClickException("cannot apply local copy-link plan") from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+
+
 @workflow.command("validate")
 @click.argument(
     "kind",
