@@ -36,6 +36,48 @@ workflow.add_command(scan_command)
 workflow.add_command(inventory_command)
 
 
+@workflow.command("control-review")
+@click.option(
+    "--control",
+    "control_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option("--root", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--actor", default=None, help="Local reviewer, not remote authentication."
+)
+@click.option(
+    "--drive-token-file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option("--max-bytes", required=True, type=click.IntRange(min=1, max=1073741824))
+def control_review(control_path, root, org_yaml, actor, drive_token_file, max_bytes):
+    """Read and reconcile one legacy intake control file; never write state."""
+    from .cli import _load_or_die, _require_acl
+    from .workflow_control_review import review_control_from_archive
+    from .workflow_drive_reader import DriveArchiveReader
+
+    try:
+        caller, org = _require_acl(org_yaml, actor)
+        reader = DriveArchiveReader(drive_token_file, max_bytes=max_bytes)
+        result = review_control_from_archive(
+            read_json(control_path),
+            org=org,
+            actor=caller,
+            manifest=_load_or_die(root),
+            reader=reader,
+        )
+    except WorkflowError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise click.ClickException("cannot review intake control") from exc
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    raise click.exceptions.Exit(2)
+
+
 def _require_local_job_actor(store, organization, request_id, caller, identity_map):
     """Bind local-job CLI mutations to the current mapped OS account."""
     row = store._find(organization, request_id)
