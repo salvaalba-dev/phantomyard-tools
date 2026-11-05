@@ -20,9 +20,22 @@ from phantomdocs.workflow_scan import scan
     sys.platform != "linux" or not hasattr(os, "geteuid") or os.geteuid() != 0,
     reason="requires Linux root for a synthetic unprivileged peer",
 )
-def test_real_unprivileged_peer_is_bound_to_phantomorg_actor():
+@pytest.mark.parametrize(
+    ("requester_mode", "mapped_actor", "expected"),
+    [
+        (False, "coordinator", "received"),
+        (True, "coordinator", "received"),
+        (True, "remote-lead", "rejected"),
+    ],
+)
+def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
+    requester_mode, mapped_actor, expected
+):
     system = fixtures.system.__wrapped__()
-    job = scan(*system)["items"][0]["job"]
+    if requester_mode:
+        system[1]["processor"]["source"] = "authenticated-requester"
+    processor = None if requester_mode else system[4]
+    job = scan(*system[:4], processor, *system[5:])["items"][0]["job"]
     with tempfile.TemporaryDirectory(prefix="pd-admission-test-", dir="/run") as root:
         directory = Path(root)
         directory.chmod(0o711)
@@ -32,7 +45,7 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor():
         lock_path.chmod(0o644)
         identity_path = directory / "identities.json"
         identity_path.write_text(
-            json.dumps({"version": 1, "actors": {"65534": "coordinator"}}),
+            json.dumps({"version": 1, "actors": {"65534": mapped_actor}}),
             encoding="utf-8",
         )
         identity_path.chmod(0o600)
@@ -67,17 +80,17 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor():
                 policy_lock=str(lock_path),
                 load_org=lambda: system[2],
                 load_installation=lambda: system[1],
-                processor=system[4],
+                processor=processor,
             )
             response = os.read(read_fd, 4096)
             _, status = os.waitpid(pid, 0)
             assert os.waitstatus_to_exitcode(status) == 0
-            assert json.loads(response) == {"status": "received"}
+            assert json.loads(response) == {"status": expected}
             with WorkflowLedger(ledger_path, readonly=True) as ledger:
-                assert (
-                    ledger.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-                    == 1
-                )
+                assert ledger.connection.execute(
+                    "SELECT COUNT(*) FROM jobs"
+                ).fetchone()[0] == int(expected == "received")
         finally:
             os.close(read_fd)
             listener.close()
+
