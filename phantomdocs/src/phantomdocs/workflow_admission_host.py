@@ -30,7 +30,7 @@ def serve_admission_once(
     on the same lock. This function does not enforce those external conditions.
     No archive context is supplied; archive requests are always rejected.
     """
-    if (
+    if processor is not None and (
         not isinstance(processor, tuple)
         or len(processor) != 2
         or not all(isinstance(part, str) and part for part in processor)

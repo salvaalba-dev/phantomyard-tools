@@ -21,7 +21,7 @@ from .workflows import (
     observed_dependency_graph,
     plan,
     read_json,
-    resolve_processor,
+    resolve_installation_processor,
     validate_contract,
     validate_job,
 )
@@ -222,7 +222,7 @@ def validate(kind, path):
     "--actor", default=None, help="Local planner actor; not remote authentication."
 )
 @click.option(
-    "--phantombot-config", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--phantombot-config", default=None, type=click.Path(exists=True, dir_okay=False)
 )
 @click.option(
     "--phantombot-state", default=None, type=click.Path(exists=True, dir_okay=False)
@@ -247,10 +247,13 @@ def make_plan(
 
     try:
         caller, _ = _require_acl(org_yaml, actor)
-        processor = resolve_processor(phantombot_config, phantombot_state)
+        installation_data = read_json(installation)
+        processor = resolve_installation_processor(
+            installation_data, phantombot_config, phantombot_state
+        )
         result = plan(
             read_json(job),
-            read_json(installation),
+            installation_data,
             load_org(org_yaml),
             load_registry(registry),
             processor,
@@ -307,7 +310,7 @@ def sign_job(job, org_yaml, actor, nsec_file, expires_at):
 @click.option("--registry", default=None, type=click.Path(dir_okay=False))
 @click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--actor", default=None)
-@click.option("--phantombot-config", required=True, type=click.Path(dir_okay=False))
+@click.option("--phantombot-config", default=None, type=click.Path(dir_okay=False))
 @click.option("--phantombot-state", default=None, type=click.Path(dir_okay=False))
 @click.option(
     "--replan",
@@ -334,12 +337,15 @@ def accept_job(
         verify_request(signed, org)  # Reject bad signatures before creating a database.
 
         def build(job):
+            installation_data = read_json(installation)
             return plan(
                 job,
-                read_json(installation),
+                installation_data,
                 org,
                 load_registry(registry),
-                resolve_processor(phantombot_config, phantombot_state),
+                resolve_installation_processor(
+                    installation_data, phantombot_config, phantombot_state
+                ),
                 caller,
             )
 
@@ -363,7 +369,7 @@ def accept_job(
 @click.option("--installation", required=True, type=click.Path(dir_okay=False))
 @click.option("--registry", default=None, type=click.Path(dir_okay=False))
 @click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--phantombot-config", required=True, type=click.Path(dir_okay=False))
+@click.option("--phantombot-config", default=None, type=click.Path(dir_okay=False))
 @click.option("--phantombot-state", default=None, type=click.Path(dir_okay=False))
 @click.option("--replan", is_flag=True)
 def accept_local_job(
@@ -390,12 +396,15 @@ def accept_local_job(
             raise WorkflowError("local requester must be the trusted local caller")
 
         def build(value):
+            installation_data = read_json(installation)
             return plan(
                 value,
-                read_json(installation),
+                installation_data,
                 org,
                 load_registry(registry),
-                resolve_processor(phantombot_config, phantombot_state),
+                resolve_installation_processor(
+                    installation_data, phantombot_config, phantombot_state
+                ),
                 caller,
             )
 
@@ -569,7 +578,7 @@ def archive_receipt(request_id, mapping, ledger, org_yaml, actor):
 @click.option("--org-yaml", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--actor", default=None)
 @click.option(
-    "--phantombot-config", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--phantombot-config", default=None, type=click.Path(exists=True, dir_okay=False)
 )
 @click.option(
     "--phantombot-state", default=None, type=click.Path(exists=True, dir_okay=False)
@@ -609,7 +618,9 @@ def prepare_job(
                 data,
                 org,
                 load_registry(registry),
-                resolve_processor(phantombot_config, phantombot_state),
+                resolve_installation_processor(
+                    data, phantombot_config, phantombot_state
+                ),
                 caller,
             )
 

@@ -25,11 +25,10 @@ _PATHS = {
     "policy_lock",
     "org_path",
     "installation_path",
-    "processor_config_path",
     "socket_path",
     "store_path",
 }
-_FIELDS = _PATHS | {"processor_state_path", "server_uid"}
+_FIELDS = _PATHS | {"processor_config_path", "processor_state_path", "server_uid"}
 
 
 class _UniqueLoader(yaml.SafeLoader):
@@ -92,10 +91,16 @@ def load_config(path):
         raise ValueError("invalid admission configuration")
     if type(value["server_uid"]) is not int or value["server_uid"] < 0:
         raise ValueError("invalid server identity")
-    if value["processor_state_path"] is not None:
-        _fields = _PATHS | {"processor_state_path"}
-    else:
-        _fields = _PATHS
+    _fields = _PATHS | {
+        field
+        for field in ("processor_config_path", "processor_state_path")
+        if value[field] is not None
+    }
+    if (
+        value["processor_state_path"] is not None
+        and value["processor_config_path"] is None
+    ):
+        raise ValueError("processor state requires a processor config")
     for field in _fields:
         candidate = value[field]
         if (

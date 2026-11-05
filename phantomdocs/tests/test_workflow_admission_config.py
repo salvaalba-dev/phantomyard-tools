@@ -36,6 +36,16 @@ def test_valid_config_is_loaded(config, monkeypatch):
     assert admission_config.load_config("/etc/example/host.json") == config
 
 
+def test_processor_files_can_be_omitted_together(config, monkeypatch):
+    config["processor_config_path"] = None
+    set_payload(monkeypatch, json.dumps(config).encode())
+    assert admission_config.load_config("/etc/example/host.json") == config
+    config["processor_state_path"] = "/etc/example/state.json"
+    set_payload(monkeypatch, json.dumps(config).encode())
+    with pytest.raises(ValueError, match="requires a processor config"):
+        admission_config.load_config("/etc/example/host.json")
+
+
 @pytest.mark.parametrize(
     "path", ["relative", "/x/../other", "/x//other", "/x/./other", "/x/\x00"]
 )

@@ -19,7 +19,15 @@ def system():
     return fixtures.system.__wrapped__()
 
 
-def run_host(monkeypatch, system, tmp_path, request, *, actor="coordinator"):
+def run_host(
+    monkeypatch,
+    system,
+    tmp_path,
+    request,
+    *,
+    actor="coordinator",
+    processor="configured",
+):
     seen = []
 
     def controlled_serve(listener, context_factory, *, policy_lock, load_org):
@@ -40,7 +48,7 @@ def run_host(monkeypatch, system, tmp_path, request, *, actor="coordinator"):
         policy_lock="/protected/policy.lock",
         load_org=lambda: deepcopy(system[2]),
         load_installation=lambda: deepcopy(system[1]),
-        processor=system[4],
+        processor=system[4] if processor == "configured" else processor,
     )
     assert seen == [("supervised-listener", "/protected/policy.lock")]
     return result
@@ -75,6 +83,24 @@ def test_host_rejects_other_actor_and_archive_requests(system, tmp_path, monkeyp
     }
 
 
+def test_host_accepts_the_authenticated_requester_without_phantombot_config(
+    system, tmp_path, monkeypatch
+):
+    system[1]["processor"]["source"] = "authenticated-requester"
+    job = scan(*system[:4], None, *system[5:])["items"][0]["job"]
+    assert run_host(monkeypatch, system, tmp_path, {"job": job}, processor=None) == {
+        "status": "received"
+    }
+    assert run_host(
+        monkeypatch,
+        system,
+        tmp_path,
+        {"job": job},
+        actor="different-actor",
+        processor=None,
+    ) == {"status": "rejected"}
+
+
 def test_host_rejects_invalid_trusted_installation(system, tmp_path, monkeypatch):
     system[1].clear()
     with pytest.raises(ValueError):
@@ -82,8 +108,14 @@ def test_host_rejects_invalid_trusted_installation(system, tmp_path, monkeypatch
     assert not (tmp_path / "ledger.sqlite").exists()
 
 
-def test_configured_host_passes_only_protected_settings(system, tmp_path, monkeypatch):
-    job = scan(*system)["items"][0]["job"]
+@pytest.mark.parametrize("requester_mode", [False, True])
+def test_configured_host_passes_only_protected_settings(
+    system, tmp_path, monkeypatch, requester_mode
+):
+    if requester_mode:
+        system[1]["processor"]["source"] = "authenticated-requester"
+    processor = None if requester_mode else system[4]
+    job = scan(*system[:4], processor, *system[5:])["items"][0]["job"]
     server_uid = os.geteuid() if hasattr(os, "geteuid") else 123
     config = {
         "identity_map": "/protected/map",
@@ -91,7 +123,7 @@ def test_configured_host_passes_only_protected_settings(system, tmp_path, monkey
         "policy_lock": "/protected/policy.lock",
         "org_path": "/protected/org.yaml",
         "installation_path": "/protected/installation.json",
-        "processor_config_path": "/protected/bot.toml",
+        "processor_config_path": None if requester_mode else "/protected/bot.toml",
         "processor_state_path": None,
         "server_uid": server_uid,
     }
@@ -125,7 +157,7 @@ def test_configured_host_passes_only_protected_settings(system, tmp_path, monkey
     from phantomdocs.workflows import load_registry, plan
 
     rebuilt = plan(
-        job, system[1], system[2], load_registry(), system[4], job["requester"]
+        job, system[1], system[2], load_registry(), processor, job["requester"]
     )
     with WorkflowLedger(tmp_path / "ledger.sqlite", readonly=True) as ledger:
         row = ledger.connection.execute("SELECT plan_hash FROM jobs").fetchone()
