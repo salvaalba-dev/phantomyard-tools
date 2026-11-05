@@ -36,6 +36,53 @@ modules do not install a daemon or timer, poll an inbox, move Drive files, or
 make an existing integration use the lock. Those require separate integration,
 tests and deployment.
 
+## Supervised admission host
+
+`python -m phantomdocs.workflow_admission_activation --config CONFIG` provides
+an admission-only host for one systemd-activated Unix stream listener. It
+requires Linux, a root-owned socket under root-controlled directories, a private
+ledger for its service UID, and root-controlled configuration files. The host
+verifies its configured server UID and obtains each caller's UID from the kernel;
+it never trusts an actor selected by the caller. It does not poll inboxes, execute
+accepted jobs, issue archive requests, move files or register documents.
+
+The root-controlled JSON configuration has this shape (all values are
+synthetic examples and paths must be adapted by the operator):
+
+```json
+{
+  "identity_map": "/etc/example/identities.json",
+  "ledger_path": "/var/lib/example/jobs.sqlite",
+  "policy_lock": "/etc/example/policy.lock",
+  "org_path": "/etc/example/org.yaml",
+  "installation_path": "/etc/example/installation.json",
+  "processor_config_path": "/etc/example/persona.toml",
+  "processor_state_path": null,
+  "socket_path": "/run/example/admission.sock",
+  "store_path": "/var/lib/example/store",
+  "server_uid": 1234
+}
+```
+
+Processor config and optional state must be current and protected; the host uses
+the same state-over-config precedence and source labels as the workflow executor.
+Do not use an untrusted or stale copy to bypass the processor pin. The socket
+must be created and its parent protected by the supervisor; it may grant the
+intended local group permission to connect. Only configured local UIDs receive
+an actor, and PhantomOrg still determines access.
+
+`pd submit-workflow --job JOB --actor ACTOR --org-yaml ORG --root STORE`
+submits one complete job through this service. Its default configuration is
+`/etc/phantomdocs/admission.json`; `--service-config` can select another
+root-controlled configuration. It verifies the target store, organization and
+server UID before sending. A received response acknowledges a request only:
+it does not confirm semantic identity, execution, archiving or registration.
+After a lost response, reconcile the request before attempting it again.
+
+The existing policy synchronization and other deployment writers must use the
+same lock before this host is enabled. An inbox processor, workflow execution,
+verified Drive archiving and explicit publication remain separate work.
+
 The Linux test suite uses only synthetic policy and requests. It checks peer
 handling, ACL inheritance, failed authorization, concurrent policy changes,
 policy-file metadata and symlink rejection. Network credentials, real documents

@@ -57,7 +57,7 @@ def test_admits_job_and_reports_blocked(monkeypatch):
         b'{"job":{},"actor":"x"}\n',
         b'{"job":NaN}\n',
         b'{"job":{}}\nextra',
-        b"x" * (MAX_REQUEST_BYTES + 2),
+        pytest.param(b"x" * (MAX_REQUEST_BYTES + 2), id="oversized"),
     ],
 )
 def test_invalid_input_never_reaches_admission(data, monkeypatch):

@@ -104,9 +104,11 @@ jobs:
         run: |
           sudo apt-get install -y acl
           python3 -m venv "$RUNNER_TEMP/pd-policy-ci"
-          "$RUNNER_TEMP/pd-policy-ci/bin/python" -m pip install --quiet .
+          "$RUNNER_TEMP/pd-policy-ci/bin/python" -m pip install --quiet ".[dev]"
           sudo env "PYTHONPATH=$PWD/src:$PWD/tests" "$RUNNER_TEMP/pd-policy-ci/bin/python" -m unittest \
             test_guarded_service test_policy_sync test_policy_service_coordination test_peer_real_identity -v
+          sudo env "PYTHONPATH=$PWD/src:$PWD/tests" "$RUNNER_TEMP/pd-policy-ci/bin/python" -m pytest \
+            tests/test_workflow_admission_linux.py -q
 
       - name: Smoke test (phantomdocs)
         working-directory: phantomdocs
