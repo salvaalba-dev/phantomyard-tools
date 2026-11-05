@@ -108,6 +108,7 @@ from .storage import (
     resolve_backend,
 )
 from .update import is_newer, latest_release
+from .workflow_admission_submit import submit_workflow
 from .workflow_cli import workflow
 
 
@@ -118,6 +119,7 @@ def main() -> None:
 
 
 main.add_command(workflow)
+main.add_command(submit_workflow)
 
 
 def _manifest_path(root: str) -> str:
