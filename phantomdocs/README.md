@@ -59,6 +59,8 @@ inventories into read-only reference-document proposals through the existing
 planner. It holds unresolved entries and does not admit, index, publish or clean up.
 The [Drive inbox inventory](docs/WORKFLOW-DRIVE-INVENTORY.md) reads bounded
 metadata from one explicit folder to supply that scan; it never downloads files.
+The [local peer components](docs/WORKFLOW-LOCAL-PEER.md) provide scoped local
+identity and cooperative policy locking; they do not install an inbox service.
 
 ## Usage
 
