@@ -93,4 +93,3 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
         finally:
             os.close(read_fd)
             listener.close()
-
