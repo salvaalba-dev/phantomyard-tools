@@ -263,6 +263,13 @@ class WorkflowLedger:
                         "execution has started; replanning is forbidden"
                     )
             planned = make_plan(job)
+            if (
+                planned.get("processor", {}).get("source") == "authenticated-requester"
+                and request.get("kind") != "trusted-local-document-job"
+            ):
+                raise WorkflowError(
+                    "requester processor requires authenticated local intake"
+                )
             self._authorize(planned, org, caller, True)
             if (
                 planned["organization"] != organization

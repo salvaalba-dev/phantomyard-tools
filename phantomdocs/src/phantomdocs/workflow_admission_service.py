@@ -29,7 +29,11 @@ def serve_configured_once(listener, config_path, *, expected_socket=None):
         policy_lock=config["policy_lock"],
         load_org=lambda: load_policy(config["org_path"]),
         load_installation=lambda: load_installation(config["installation_path"]),
-        processor=load_processor(
-            config["processor_config_path"], config["processor_state_path"]
+        processor=(
+            load_processor(
+                config["processor_config_path"], config["processor_state_path"]
+            )
+            if config["processor_config_path"] is not None
+            else None
         ),
     )

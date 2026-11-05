@@ -212,6 +212,20 @@ def resolve_processor(config_path, state_path=None):
     return actor, source
 
 
+def resolve_installation_processor(installation, config_path, state_path=None):
+    """Resolve the legacy default, or defer to an authenticated requester.
+
+    A caller using the requester mode must authenticate and bind the caller
+    before admitting or executing a job. Planning alone is not authentication.
+    """
+    validate_contract(installation, "installation")
+    if installation["processor"]["source"] == "authenticated-requester":
+        return None
+    if not config_path:
+        raise WorkflowError("a PhantomBot configuration is required for this processor")
+    return resolve_processor(config_path, state_path)
+
+
 def plan(job, installation, org, registry_data, processor, caller):
     validate_job(job)
     validate_contract(installation, "installation")
@@ -285,7 +299,18 @@ def plan(job, installation, org, registry_data, processor, caller):
         raise WorkflowError(
             "requester is not authorized for the selected document context"
         )
-    actor, processor_source = processor
+    if installation["processor"]["source"] == "authenticated-requester":
+        if caller != job["requester"]:
+            raise WorkflowError("processor must match the authenticated requester")
+        actor, processor_source = caller, "authenticated-requester"
+    elif (
+        not isinstance(processor, tuple)
+        or len(processor) != 2
+        or not all(isinstance(value, str) and value for value in processor)
+    ):
+        raise WorkflowError("a resolved default processor is required")
+    else:
+        actor, processor_source = processor
     if not can_write(org, actor, category, owners):
         raise WorkflowError(
             "default processor cannot write this classification/ownership"

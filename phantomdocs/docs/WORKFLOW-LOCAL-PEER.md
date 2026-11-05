@@ -71,6 +71,19 @@ must be created and its parent protected by the supervisor; it may grant the
 intended local group permission to connect. Only configured local UIDs receive
 an actor, and PhantomOrg still determines access.
 
+An installation may instead opt in to `"processor": {"source":
+"authenticated-requester"}`. In this mode the processor is the requesting actor,
+and both `processor_config_path` and `processor_state_path` can be null. The
+host authenticates the local UID and binds it to the job requester before the
+planner runs; the planner still checks PhantomOrg read/write access and owners.
+The executor rebuilds the same pinned plan and requires the processor actor.
+A read-only scan is only a proposal and does not itself authenticate anyone.
+Code invoking the planner or ledger directly must establish the caller's
+identity before a mutation; an actor name in JSON is not authentication.
+This mode is restricted to trusted local intake; signed remote jobs cannot use
+it, and execution rechecks that the recorded trust mode is local.
+Existing `phantombot-default` installations retain their previous behavior.
+
 `pd submit-workflow --job JOB --actor ACTOR --org-yaml ORG --root STORE`
 submits one complete job through this service. Its default configuration is
 `/etc/phantomdocs/admission.json`; `--service-config` can select another

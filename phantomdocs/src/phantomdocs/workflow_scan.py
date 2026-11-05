@@ -300,7 +300,7 @@ def scan(
     "--actor", default=None, help="Authenticated local planner; not a remote sender."
 )
 @click.option(
-    "--phantombot-config", required=True, type=click.Path(exists=True, dir_okay=False)
+    "--phantombot-config", default=None, type=click.Path(exists=True, dir_okay=False)
 )
 @click.option(
     "--phantombot-state", default=None, type=click.Path(exists=True, dir_okay=False)
@@ -329,7 +329,7 @@ def scan_command(
 ):
     """Plan general inbox references from a complete metadata inventory; never execute."""
     from .cli import _load_or_die, _require_acl
-    from .workflows import load_registry, read_json, resolve_processor
+    from .workflows import load_registry, read_json, resolve_installation_processor
 
     try:
         caller, org = _require_acl(org_yaml, actor)
@@ -339,12 +339,15 @@ def scan_command(
             from .workflow_provenance_audit import links_for_scan
 
             links = links_for_scan(root, data, org, caller)
+        installation_data = read_json(installation)
         result = scan(
             read_inventory(inventory),
-            read_json(installation),
+            installation_data,
             org,
             load_registry(registry),
-            resolve_processor(phantombot_config, phantombot_state),
+            resolve_installation_processor(
+                installation_data, phantombot_config, phantombot_state
+            ),
             caller,
             data,
             {

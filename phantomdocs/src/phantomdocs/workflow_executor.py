@@ -221,6 +221,13 @@ class WorkflowExecutor:
                     raise WorkflowError("only the pinned processor can execute")
                 stored = self.ledger._find(organization, request_id)
                 signed = json.loads(stored["request_json"])
+                if (
+                    planned["processor"].get("source") == "authenticated-requester"
+                    and signed.get("kind") != "trusted-local-document-job"
+                ):
+                    raise WorkflowError(
+                        "requester processor requires authenticated local intake"
+                    )
                 if signed.get("kind") == "trusted-local-document-job":
                     if (
                         set(signed) != {"kind", "version", "job"}
