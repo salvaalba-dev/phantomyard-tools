@@ -7,7 +7,9 @@ sender. All code running as a mapped account is trusted as that account.
 import json
 import os
 import re
+import socket
 import stat
+import struct
 import sys
 from pathlib import Path
 
@@ -34,7 +36,37 @@ def resolve_local_actor(path):
     """
     if sys.platform != "linux" or not hasattr(os, "geteuid"):
         raise WorkflowError("local identity requires Linux effective UID support")
-    uid = os.geteuid()
+    return _resolve_actor_uid(path, os.geteuid())
+
+
+def resolve_peer_actor(path, connection):
+    """Resolve the kernel-authenticated peer of a connected Unix stream socket.
+
+    The peer UID represents the local service account, not a remote human.
+    The caller must create and protect the listening socket separately.
+    """
+    if sys.platform != "linux" or not hasattr(socket, "SO_PEERCRED"):
+        raise WorkflowError("peer identity requires Linux Unix sockets")
+    try:
+        if (
+            connection.family != socket.AF_UNIX
+            or connection.type & 0xF != socket.SOCK_STREAM
+        ):
+            raise WorkflowError("peer identity requires a Unix stream socket")
+        raw = connection.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+        )
+        pid, uid, _gid = struct.unpack("3i", raw)
+    except (AttributeError, OSError, TypeError, struct.error) as exc:
+        raise WorkflowError("cannot read kernel peer credentials") from exc
+    if pid <= 0:
+        raise WorkflowError("invalid kernel peer credentials")
+    return _resolve_actor_uid(path, uid)
+
+
+def _resolve_actor_uid(path, uid):
+    if type(uid) is not int or uid < 0:
+        raise WorkflowError("invalid local account identity")
     if uid == 0:
         raise WorkflowError("root cannot be a local workflow actor")
     raw_path = os.fspath(path)

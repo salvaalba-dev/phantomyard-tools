@@ -99,6 +99,15 @@ jobs:
           python3 -m pip install --quiet ".[dev]"
           python3 -m pytest -q
 
+      - name: Privileged synthetic policy coordination tests (phantomdocs)
+        working-directory: phantomdocs
+        run: |
+          sudo apt-get install -y acl
+          python3 -m venv "$RUNNER_TEMP/pd-policy-ci"
+          "$RUNNER_TEMP/pd-policy-ci/bin/python" -m pip install --quiet .
+          sudo env "PYTHONPATH=$PWD/src:$PWD/tests" "$RUNNER_TEMP/pd-policy-ci/bin/python" -m unittest \
+            test_guarded_service test_policy_sync test_policy_service_coordination test_peer_real_identity -v
+
       - name: Smoke test (phantomdocs)
         working-directory: phantomdocs
         run: |
