@@ -1,6 +1,7 @@
 """Bounded metadata and history lookup for a kernel-authenticated local peer."""
 
 import json
+import re
 
 from .access import can_read
 from .manifest import node_by_mac, node_by_urn, resolve_node, validate, versions_of
@@ -19,11 +20,17 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
     operation, ref = request["operation"], request["ref"]
     mac = request.get("mac")
     if (
-        operation not in {"reference", "versions"}
+        operation not in {"reference", "versions", "content-reference"}
         or not isinstance(ref, str)
         or not ref
         or len(ref.encode("utf-8")) > MAX_QUERY_BYTES
-        or (mac is not None and (operation != "reference" or not isinstance(mac, str)))
+        or (
+            mac is not None
+            and (
+                operation not in {"reference", "content-reference"}
+                or not isinstance(mac, str)
+            )
+        )
     ):
         raise ValueError("invalid lookup request")
     actor = resolve_peer_actor(identity_map, connection)
@@ -47,6 +54,24 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
             location_uri(location) if "ref" in location else location.get("path", "")
         )
         result = {"urn": node["urn"], "location": reference}
+    elif operation == "content-reference":
+        locations = node.get("locations") or []
+        if node.get("kind") != "doc" or not locations:
+            raise ValueError("document unavailable")
+        location = locations[0]
+        reference = location_uri(location) if "ref" in location else ""
+        file_id = reference.removeprefix("gdrive://")
+        if (
+            not reference.startswith("gdrive://")
+            or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,255}", file_id) is None
+        ):
+            raise ValueError("content reference unavailable")
+        result = {
+            "urn": node["urn"],
+            "location": reference,
+            "contentHash": node["contentHash"],
+            "mac": node["mac"],
+        }
     else:
         history = versions_of(manifest, node["urn"])
         if any(not can_read(org, actor, version["category"]) for version in history):

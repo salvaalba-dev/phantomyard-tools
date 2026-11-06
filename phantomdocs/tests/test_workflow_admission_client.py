@@ -155,6 +155,30 @@ def test_lookup_accepts_authorized_reference_shape(peer):
     assert result["result"]["location"] == "gdrive://example"
 
 
+def test_content_lookup_checks_reference_and_hash_shapes(peer):
+    response = {
+        "status": "ok",
+        "actor": "worker",
+        "result": {
+            "urn": "urn:example:doc:report",
+            "location": "gdrive://example",
+            "contentHash": "a" * 64,
+            "mac": "b" * 64,
+        },
+    }
+    payload = {"lookup": {"operation": "content-reference", "ref": "report"}}
+    peer[0].response = (json.dumps(response) + "\n").encode()
+    assert (
+        peer_client.request_peer(os.path.abspath("peer.sock"), 123, payload) == response
+    )
+
+    for key, bad in [("location", "gdrive://--bad"), ("contentHash", "x" * 64)]:
+        damaged = {**response, "result": {**response["result"], key: bad}}
+        peer[0].response = (json.dumps(damaged) + "\n").encode()
+        with pytest.raises(peer_client.PeerClientError):
+            peer_client.request_peer(os.path.abspath("peer.sock"), 123, payload)
+
+
 @pytest.mark.parametrize(
     "row",
     [
