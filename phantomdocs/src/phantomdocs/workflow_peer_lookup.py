@@ -14,13 +14,17 @@ from .manifest import (
 )
 from .storage import location_uri
 from .workflow_local_identity import resolve_peer_actor
+from .workflow_peer_audit import filtered_audit
 from .workflow_peer_search import MAX_QUERY_BYTES, MAX_SEARCH_RESPONSE_BYTES
 
 
-def lookup_peer(connection, request, *, identity_map, org, load_manifest):
+def lookup_peer(
+    connection, request, *, identity_map, org, load_manifest, load_audit=None
+):
     """Resolve authorized metadata while the host holds policy and store locks."""
     if not isinstance(request, dict) or set(request) not in (
         {"operation"},
+        {"operation", "limit"},
         {"operation", "ref"},
         {"operation", "ref", "mac"},
     ):
@@ -29,10 +33,11 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
     mac = request.get("mac")
     if (
         operation
-        not in {"reference", "versions", "content-reference", "status", "refs"}
+        not in {"reference", "versions", "content-reference", "status", "refs", "audit"}
         or (operation in {"status", "refs"} and set(request) != {"operation"})
+        or (operation == "audit" and set(request) != {"operation", "limit"})
         or (
-            operation not in {"status", "refs"}
+            operation not in {"status", "refs", "audit"}
             and (
                 not isinstance(ref, str)
                 or not ref
@@ -54,7 +59,7 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
     manifest = load_manifest()
     if not isinstance(manifest, dict) or validate(manifest):
         raise ValueError("invalid manifest")
-    if operation in {"status", "refs"}:
+    if operation in {"status", "refs", "audit"}:
         visible = [
             node for node in manifest["nodes"] if can_read(org, actor, node["category"])
         ]
@@ -70,13 +75,23 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
                 "folders": len(visible) - len(docs),
                 "bytes": sum(int(node.get("size") or 0) for node in docs),
             }
-        else:
+        elif operation == "refs":
             result = []
             for name, value in manifest.get("refs", {}).items():
                 target = ref_target_mac(value)
                 node = node_by_mac(manifest, target) if target else None
                 if node and can_read(org, actor, node["category"]):
                     result.append({"name": name, "mac": target, "urn": node["urn"]})
+        else:
+            if load_audit is None:
+                raise ValueError("audit unavailable")
+            result = filtered_audit(
+                load_audit(),
+                org=org,
+                actor=actor,
+                manifest=manifest,
+                limit=request["limit"],
+            )
         response = {"status": "ok", "actor": actor, "result": result}
         if (
             len(json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode())

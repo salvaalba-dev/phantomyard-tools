@@ -60,6 +60,7 @@ def serve_connection(
     archive_context=None,
     load_search_manifest=None,
     search_guard=None,
+    load_audit=None,
 ):
     """Handle one request using exclusively host-provided trusted context."""
     connection.settimeout(5)
@@ -93,12 +94,17 @@ def serve_connection(
                 raise ValueError("search is unavailable")
             with search_guard():
                 handler = search_peer if "search" in request else lookup_peer
+                context = {
+                    "identity_map": identity_map,
+                    "org": org,
+                    "load_manifest": load_search_manifest,
+                }
+                if "lookup" in request:
+                    context["load_audit"] = load_audit
                 response = handler(
                     connection,
                     request["search"] if "search" in request else request["lookup"],
-                    identity_map=identity_map,
-                    org=org,
-                    load_manifest=load_search_manifest,
+                    **context,
                 )
                 sending_search = True
                 connection.sendall(

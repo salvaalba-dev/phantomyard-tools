@@ -1376,6 +1376,16 @@ def refs(root):
 @click.option("--root", default=".", show_default=True, help="Local backend root.")
 def audit(limit, root):
     """Show the append-only audit log."""
+    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+
+    audit_path = os.path.join(root, "audit.log")
+    if not os.access(audit_path, os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        entries = lookup_configured(
+            "audit", None, actor=None, org_yaml=None, root=root, limit=limit
+        )
+        for entry in entries:
+            click.echo(json.dumps(entry))
+        return
     for entry in audit_read(root, limit):
         click.echo(json.dumps(entry))
 

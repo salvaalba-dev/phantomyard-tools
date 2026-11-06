@@ -350,3 +350,27 @@ def test_cli_uses_peer_identity_for_status_and_refs(
     assert (
         "visible" if command == "status" else "urn:example:doc:report"
     ) in result.output
+
+
+def test_cli_audit_uses_filtered_peer_without_actor_flag(monkeypatch, config, tmp_path):
+    marker = tmp_path / "protected-config"
+    marker.touch()
+    monkeypatch.setattr(search, "DEFAULT_CONFIG", str(marker))
+    row = {
+        "ts": "2026-01-01T00:00:00Z",
+        "actor": "reader",
+        "action": "add",
+        "urn": "urn:example:doc:report",
+        "mac": "a" * 64,
+    }
+
+    def request(_path, _uid, payload):
+        assert payload == {"lookup": {"operation": "audit", "limit": 5}}
+        return {"status": "ok", "actor": "reader", "result": [row]}
+
+    monkeypatch.setattr(search, "request_peer", request)
+    result = CliRunner().invoke(
+        main, ["audit", "--limit", "5", "--root", config["store_path"]]
+    )
+    assert result.exit_code == 0, result.output
+    assert "urn:example:doc:report" in result.output
