@@ -180,6 +180,57 @@ def test_content_lookup_checks_reference_and_hash_shapes(peer):
 
 
 @pytest.mark.parametrize(
+    "operation,result",
+    [
+        (
+            "status",
+            {
+                "org": "example",
+                "namespace": "docs",
+                "tenant": "single",
+                "nodes": 1,
+                "docs": 1,
+                "folders": 0,
+                "bytes": 4,
+            },
+        ),
+        (
+            "refs",
+            [{"name": "latest", "mac": "a" * 64, "urn": "urn:example:doc:report"}],
+        ),
+    ],
+)
+def test_accepts_scoped_status_and_ref_results(peer, operation, result):
+    response = {"status": "ok", "actor": "worker", "result": result}
+    peer[0].response = (json.dumps(response) + "\n").encode()
+    assert (
+        peer_client.request_peer(
+            os.path.abspath("peer.sock"), 123, {"lookup": {"operation": operation}}
+        )
+        == response
+    )
+
+
+def test_rejects_invalid_scoped_status_counts(peer):
+    result = {
+        "org": "example",
+        "namespace": "docs",
+        "tenant": "single",
+        "nodes": 5,
+        "docs": 1,
+        "folders": 0,
+        "bytes": 4,
+    }
+    peer[0].response = (
+        json.dumps({"status": "ok", "actor": "worker", "result": result}) + "\n"
+    ).encode()
+    with pytest.raises(peer_client.PeerClientError):
+        peer_client.request_peer(
+            os.path.abspath("peer.sock"), 123, {"lookup": {"operation": "status"}}
+        )
+
+
+@pytest.mark.parametrize(
     "row",
     [
         {"mac": "x" * 64, "size": 4, "current": True},

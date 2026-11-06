@@ -4,7 +4,14 @@ import json
 import re
 
 from .access import can_read
-from .manifest import node_by_mac, node_by_urn, resolve_node, validate, versions_of
+from .manifest import (
+    node_by_mac,
+    node_by_urn,
+    ref_target_mac,
+    resolve_node,
+    validate,
+    versions_of,
+)
 from .storage import location_uri
 from .workflow_local_identity import resolve_peer_actor
 from .workflow_peer_search import MAX_QUERY_BYTES, MAX_SEARCH_RESPONSE_BYTES
@@ -13,17 +20,25 @@ from .workflow_peer_search import MAX_QUERY_BYTES, MAX_SEARCH_RESPONSE_BYTES
 def lookup_peer(connection, request, *, identity_map, org, load_manifest):
     """Resolve authorized metadata while the host holds policy and store locks."""
     if not isinstance(request, dict) or set(request) not in (
+        {"operation"},
         {"operation", "ref"},
         {"operation", "ref", "mac"},
     ):
         raise ValueError("invalid lookup request")
-    operation, ref = request["operation"], request["ref"]
+    operation, ref = request["operation"], request.get("ref")
     mac = request.get("mac")
     if (
-        operation not in {"reference", "versions", "content-reference"}
-        or not isinstance(ref, str)
-        or not ref
-        or len(ref.encode("utf-8")) > MAX_QUERY_BYTES
+        operation
+        not in {"reference", "versions", "content-reference", "status", "refs"}
+        or (operation in {"status", "refs"} and set(request) != {"operation"})
+        or (
+            operation not in {"status", "refs"}
+            and (
+                not isinstance(ref, str)
+                or not ref
+                or len(ref.encode("utf-8")) > MAX_QUERY_BYTES
+            )
+        )
         or (
             mac is not None
             and (
@@ -39,6 +54,36 @@ def lookup_peer(connection, request, *, identity_map, org, load_manifest):
     manifest = load_manifest()
     if not isinstance(manifest, dict) or validate(manifest):
         raise ValueError("invalid manifest")
+    if operation in {"status", "refs"}:
+        visible = [
+            node for node in manifest["nodes"] if can_read(org, actor, node["category"])
+        ]
+        if operation == "status":
+            header = manifest["manifest"]
+            docs = [node for node in visible if node["kind"] == "doc"]
+            result = {
+                "org": header["org"],
+                "namespace": header["namespace"],
+                "tenant": header["tenant"],
+                "nodes": len(visible),
+                "docs": len(docs),
+                "folders": len(visible) - len(docs),
+                "bytes": sum(int(node.get("size") or 0) for node in docs),
+            }
+        else:
+            result = []
+            for name, value in manifest.get("refs", {}).items():
+                target = ref_target_mac(value)
+                node = node_by_mac(manifest, target) if target else None
+                if node and can_read(org, actor, node["category"]):
+                    result.append({"name": name, "mac": target, "urn": node["urn"]})
+        response = {"status": "ok", "actor": actor, "result": result}
+        if (
+            len(json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode())
+            > MAX_SEARCH_RESPONSE_BYTES
+        ):
+            raise ValueError("lookup response exceeds limit")
+        return response
     node = resolve_node(manifest, ref)
     if mac:
         selected = node_by_mac(manifest, mac)

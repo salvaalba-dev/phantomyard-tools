@@ -1351,6 +1351,15 @@ def rollback(urn, to_mac, backend, org_yaml, actor, nsec_file, root):
 @click.option("--root", default=".", show_default=True, help="Local backend root.")
 def refs(root):
     """List mutable refs."""
+    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+
+    if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        rows = lookup_configured("refs", None, actor=None, org_yaml=None, root=root)
+        if not rows:
+            click.echo("no refs")
+        for row in rows:
+            click.echo(f"{row['name']:20} {display_id(row['mac'])}  {row['urn']}")
+        return
     manifest = _load_or_die(root)
     if not manifest.get("refs"):
         click.echo("no refs")
@@ -2187,6 +2196,19 @@ def acl(org_yaml, actor, category):
 @click.option("--root", default=".", show_default=True, help="Local backend root.")
 def status(root):
     """Namespace summary."""
+    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+
+    if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        summary = lookup_configured(
+            "status", None, actor=None, org_yaml=None, root=root
+        )
+        click.echo(f"org       {summary['org']}/{summary['namespace']}")
+        click.echo(f"tenant    {summary['tenant']}")
+        click.echo(
+            f"visible   {summary['nodes']} ({summary['docs']} docs, {summary['folders']} folders)"
+        )
+        click.echo(f"bytes     {summary['bytes']}")
+        return
     manifest = _load_or_die(root)
     m = manifest["manifest"]
     nodes = manifest.get("nodes", [])

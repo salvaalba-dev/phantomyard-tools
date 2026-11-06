@@ -50,6 +50,36 @@ def test_content_reference_pins_exact_version_and_hash(monkeypatch, system):
     }
 
 
+def test_status_and_refs_include_only_authorized_nodes(monkeypatch, system):
+    restricted = deepcopy(system[6]["nodes"][1])
+    restricted.update(
+        {
+            "category": "category-3",
+            "mac": "4" * 64,
+            "urn": "urn:example-org:doc:project-reports/secret",
+            "slug": "secret",
+        }
+    )
+    system[6]["nodes"].append(restricted)
+    system[6]["refs"] = {"visible": "2" * 64, "hidden": "4" * 64}
+    result = call(monkeypatch, system, {"operation": "status"})["result"]
+    assert result["nodes"] == 2 and result["docs"] == 1 and result["folders"] == 1
+    rows = call(monkeypatch, system, {"operation": "refs"})["result"]
+    assert rows == [
+        {
+            "name": "visible",
+            "mac": "2" * 64,
+            "urn": "urn:example-org:doc:project-reports/source",
+        }
+    ]
+
+
+@pytest.mark.parametrize("operation", ["status", "refs"])
+def test_status_and_refs_reject_claimed_actor(monkeypatch, system, operation):
+    with pytest.raises(ValueError):
+        call(monkeypatch, system, {"operation": operation, "actor": "other"})
+
+
 @pytest.mark.parametrize(
     "location",
     [
