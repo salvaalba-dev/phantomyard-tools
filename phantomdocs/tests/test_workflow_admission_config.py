@@ -73,6 +73,11 @@ def test_organization_must_be_valid_and_unambiguous(monkeypatch):
     set_payload(monkeypatch, b"version: 1\nversion: 2\n")
     with pytest.raises(ValueError, match="organization"):
         admission_config.load_policy("/etc/example/org.yaml")
+    set_payload(
+        monkeypatch, b"version: 1\npermissions:\n  allow: true\n  allow: false\n"
+    )
+    with pytest.raises(ValueError, match="organization"):
+        admission_config.load_policy("/etc/example/org.yaml")
     set_payload(monkeypatch, b"!!python/object:builtins.object {}")
     with pytest.raises(ValueError, match="organization"):
         admission_config.load_policy("/etc/example/org.yaml")
