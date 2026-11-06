@@ -317,3 +317,36 @@ def test_cli_cat_returns_verified_snapshot(monkeypatch, config, tmp_path):
     assert result.exit_code == 0, result.output
     assert result.stdout_bytes.endswith(b"synthetic bytes")
     assert snapshot.file.closed
+
+
+@pytest.mark.parametrize("command", ["status", "refs"])
+def test_cli_uses_peer_identity_for_status_and_refs(
+    monkeypatch, config, tmp_path, command
+):
+    marker = tmp_path / "protected-config"
+    marker.touch()
+    monkeypatch.setattr(search, "DEFAULT_CONFIG", str(marker))
+
+    def request(_path, _uid, payload):
+        assert payload == {"lookup": {"operation": command}}
+        result = (
+            {
+                "org": "example",
+                "namespace": "docs",
+                "tenant": "single",
+                "nodes": 1,
+                "docs": 1,
+                "folders": 0,
+                "bytes": 4,
+            }
+            if command == "status"
+            else [{"name": "current", "mac": "a" * 64, "urn": "urn:example:doc:report"}]
+        )
+        return {"status": "ok", "actor": "reader", "result": result}
+
+    monkeypatch.setattr(search, "request_peer", request)
+    result = CliRunner().invoke(main, [command, "--root", config["store_path"]])
+    assert result.exit_code == 0, result.output
+    assert (
+        "visible" if command == "status" else "urn:example:doc:report"
+    ) in result.output

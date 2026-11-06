@@ -121,6 +121,12 @@ stdout. If the reference, version or authorization changes, the command closes
 the snapshot and returns an error. Other protected content locations remain
 unavailable through this path.
 
+When the manifest is inaccessible, `pd status` and `pd refs` also use the
+protected peer. The status counts include only nodes the local actor can read;
+reference names are returned only when their targets are readable. These
+commands identify the actor through the operating-system peer rather than a
+caller-supplied actor flag. The audit log and other commands remain separate.
+
 This check controls the CLI response. It cannot revoke access already granted
 to the user's Drive account, prevent that user from calling Drive directly, or
 recall data that has already been obtained. Drive sharing must independently

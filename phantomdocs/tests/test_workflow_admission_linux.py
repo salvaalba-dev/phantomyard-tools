@@ -107,6 +107,7 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
         ({"lookup": {"operation": "reference", "ref": "source"}}, "rejected"),
         ({"lookup": {"operation": "content-reference", "ref": "source"}}, "rejected"),
         ({"lookup": {"operation": "reference", "ref": "project-reports"}}, "reference"),
+        ({"lookup": {"operation": "status"}}, "status"),
     ],
 )
 def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
@@ -172,7 +173,7 @@ def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
                 assert result["items"] == [
                     {"kind": "folder", "urn": "urn:example-org:folder:project-reports"}
                 ]
-            else:
+            elif expected == "reference":
                 assert result == {
                     "status": "ok",
                     "actor": "coordinator",
@@ -181,6 +182,10 @@ def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
                         "location": "",
                     },
                 }
+            else:
+                assert result["status"] == "ok"
+                assert result["actor"] == "coordinator"
+                assert result["result"]["nodes"] == 1
         finally:
             os.close(read_fd)
             listener.close()

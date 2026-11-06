@@ -28,11 +28,17 @@ def search_configured(query, *, actor, org_yaml, root, config_path=DEFAULT_CONFI
 
 def lookup_configured(operation, ref, *, actor, org_yaml, root, mac=None):
     """Resolve an authorized reference or version history through the peer."""
-    payload = {"operation": operation, "ref": ref}
+    payload = {"operation": operation}
+    if ref is not None:
+        payload["ref"] = ref
     if mac is not None:
         payload["mac"] = mac
     result = _request_configured(
-        {"lookup": payload}, actor=actor, org_yaml=org_yaml, root=root
+        {"lookup": payload},
+        actor=actor,
+        org_yaml=org_yaml,
+        root=root,
+        allow_implicit=operation in {"status", "refs"},
     )["result"]
     if operation in {"reference", "content-reference"} and any(
         value and not value.isprintable() for value in result.values()
@@ -68,20 +74,26 @@ def read_scoped_drive_content(ref, *, actor, org_yaml, root, mac=None):
         raise
 
 
-def _request_configured(request, *, actor, org_yaml, root, config_path=DEFAULT_CONFIG):
+def _request_configured(
+    request, *, actor, org_yaml, root, config_path=DEFAULT_CONFIG, allow_implicit=False
+):
     try:
         config = load_config(config_path)
         if (
-            not actor
-            or not org_yaml
+            (not allow_implicit and (not actor or not org_yaml))
             or not os.path.isabs(root)
-            or not os.path.isabs(org_yaml)
+            or (org_yaml is not None and not os.path.isabs(org_yaml))
             or os.path.normpath(root) != config["store_path"]
-            or os.path.normpath(org_yaml) != config["org_path"]
+            or (
+                org_yaml is not None
+                and os.path.normpath(org_yaml) != config["org_path"]
+            )
         ):
             raise ValueError("search target does not match protected configuration")
         result = request_peer(config["socket_path"], config["server_uid"], request)
-        if result.get("status") != "ok" or result.get("actor") != actor:
+        if result.get("status") != "ok" or (
+            actor is not None and result.get("actor") != actor
+        ):
             raise ValueError("search actor was not authenticated")
         return result
     except (OSError, ValueError, KeyError, TypeError, PeerClientError) as exc:

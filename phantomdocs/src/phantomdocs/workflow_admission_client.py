@@ -163,6 +163,45 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
                         for row in result
                     ):
                         raise PeerClientError("invalid peer response")
+                elif operation == "refs":
+                    if not isinstance(result, list) or any(
+                        not isinstance(row, dict)
+                        or set(row) != {"name", "mac", "urn"}
+                        or not isinstance(row["name"], str)
+                        or not row["name"].isprintable()
+                        or not isinstance(row["urn"], str)
+                        or not row["urn"].isprintable()
+                        or not isinstance(row["mac"], str)
+                        or len(row["mac"]) != 64
+                        or any(c not in "0123456789abcdef" for c in row["mac"])
+                        for row in result
+                    ):
+                        raise PeerClientError("invalid peer response")
+                elif operation == "status":
+                    if (
+                        not isinstance(result, dict)
+                        or set(result)
+                        != {
+                            "org",
+                            "namespace",
+                            "tenant",
+                            "nodes",
+                            "docs",
+                            "folders",
+                            "bytes",
+                        }
+                        or any(
+                            not isinstance(result[k], str)
+                            or not result[k].isprintable()
+                            for k in ("org", "namespace", "tenant")
+                        )
+                        or any(
+                            type(result[k]) is not int or result[k] < 0
+                            for k in ("nodes", "docs", "folders", "bytes")
+                        )
+                        or result["nodes"] != result["docs"] + result["folders"]
+                    ):
+                        raise PeerClientError("invalid peer response")
                 else:
                     raise PeerClientError("invalid peer request")
             elif set(value) != {"status"}:
