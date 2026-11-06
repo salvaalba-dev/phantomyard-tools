@@ -7,6 +7,7 @@ authorization; this client does not turn a remote human into a local actor.
 
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -124,7 +125,25 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
                     raise PeerClientError("invalid peer response")
                 operation = request["lookup"].get("operation")
                 result = value["result"]
-                if operation == "reference":
+                if operation == "content-reference":
+                    if (
+                        not isinstance(result, dict)
+                        or set(result) != {"urn", "location", "contentHash", "mac"}
+                        or not all(isinstance(result[k], str) for k in result)
+                        or not result["urn"].isprintable()
+                        or re.fullmatch(
+                            r"gdrive://[A-Za-z0-9_][A-Za-z0-9_-]{0,255}",
+                            result["location"],
+                        )
+                        is None
+                        or any(
+                            len(result[k]) != 64
+                            or any(c not in "0123456789abcdef" for c in result[k])
+                            for k in ("contentHash", "mac")
+                        )
+                    ):
+                        raise PeerClientError("invalid peer response")
+                elif operation == "reference":
                     if (
                         not isinstance(result, dict)
                         or set(result) != {"urn", "location"}

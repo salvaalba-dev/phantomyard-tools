@@ -113,8 +113,18 @@ existing local search behavior.
 The same peer can resolve an authorized document reference and its version
 history without giving the client a copy of the manifest. It rejects a history
 if any retained version is outside the actor's access. `pd get` without `--cat`
-and `pd versions` use this peer when the manifest is inaccessible. Protected
-content streaming (`pd get --cat`) is not implemented; it returns an error.
+and `pd versions` use this peer when the manifest is inaccessible. For a
+Drive-backed document, `pd get --cat` downloads through the caller's own
+workspace tool, checks the bytes against the recorded SHA-256, and rechecks
+the authorized reference and version before writing the verified snapshot to
+stdout. If the reference, version or authorization changes, the command closes
+the snapshot and returns an error. Other protected content locations remain
+unavailable through this path.
+
+This check controls the CLI response. It cannot revoke access already granted
+to the user's Drive account, prevent that user from calling Drive directly, or
+recall data that has already been obtained. Drive sharing must independently
+match the intended access, and a response already delivered cannot be recalled.
 
 This is not a complete filesystem security boundary on its own. If the caller
 can read the manifest directly, it can inspect its contents outside the search

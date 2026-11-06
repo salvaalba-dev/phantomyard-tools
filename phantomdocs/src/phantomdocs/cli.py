@@ -500,13 +500,23 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
 
     Only nodes the resolved actor may read are returned. Direct local access
     trusts the supplied actor; the protected peer fallback authenticates the
-    local account and currently provides reference metadata only.
+    local account. Protected content retrieval uses the caller's Drive account.
     """
-    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+    from .workflow_admission_search import (
+        DEFAULT_CONFIG,
+        lookup_configured,
+        read_scoped_drive_content,
+    )
 
     if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
         if cat:
-            raise click.ClickException("protected content retrieval is unavailable")
+            result, content = read_scoped_drive_content(
+                ref, actor=_resolve_actor(actor), org_yaml=org_yaml, root=root, mac=mac
+            )
+            with content:
+                click.echo(f"{result['urn']} -> {result['location']}")
+                content.copy_to(sys.stdout.buffer)
+            return
         result = lookup_configured(
             "reference",
             ref,

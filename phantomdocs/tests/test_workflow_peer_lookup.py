@@ -38,6 +38,34 @@ def test_authorized_reference_and_history(monkeypatch, system):
     assert result["result"] == [{"mac": "2" * 64, "size": 0, "current": True}]
 
 
+def test_content_reference_pins_exact_version_and_hash(monkeypatch, system):
+    result = call(
+        monkeypatch, system, {"operation": "content-reference", "ref": "source"}
+    )
+    assert result["result"] == {
+        "urn": "urn:example-org:doc:project-reports/source",
+        "location": "gdrive://example-file",
+        "contentHash": "3" * 64,
+        "mac": "2" * 64,
+    }
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        {"backend": "file", "ref": "/restricted/file"},
+        {"backend": "gdrive", "ref": "--dangerous"},
+        {"backend": "gdrive", "ref": "file;bad"},
+    ],
+)
+def test_content_reference_rejects_non_drive_and_unsafe_ids(
+    monkeypatch, system, location
+):
+    system[6]["nodes"][1]["locations"] = [location]
+    with pytest.raises(ValueError, match="content reference unavailable"):
+        call(monkeypatch, system, {"operation": "content-reference", "ref": "source"})
+
+
 @pytest.mark.parametrize("operation", ["reference", "versions"])
 def test_unknown_and_unauthorized_lookups_fail_identically(
     monkeypatch, system, operation

@@ -105,6 +105,7 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
     [
         ({"search": {"query": ""}}, "search"),
         ({"lookup": {"operation": "reference", "ref": "source"}}, "rejected"),
+        ({"lookup": {"operation": "content-reference", "ref": "source"}}, "rejected"),
         ({"lookup": {"operation": "reference", "ref": "project-reports"}}, "reference"),
     ],
 )
