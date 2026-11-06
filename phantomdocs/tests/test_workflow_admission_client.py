@@ -113,6 +113,35 @@ def test_invalid_request_never_connects(peer):
     factory.assert_not_called()
 
 
+def test_search_accepts_only_bounded_typed_results(peer):
+    peer[0].response = (
+        b'{"status":"ok","actor":"worker","items":'
+        b'[{"kind":"doc","urn":"urn:example:doc:report"}]}\n'
+    )
+    result = peer_client.request_peer(
+        os.path.abspath("peer.sock"), 123, {"search": {"query": "report"}}
+    )
+    assert result["actor"] == "worker"
+    assert result["items"] == [{"kind": "doc", "urn": "urn:example:doc:report"}]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        b'{"status":"ok","actor":"worker","items":[],"extra":"hidden"}\n',
+        b'{"status":"ok","actor":"worker","items":[{"kind":"doc","urn":"x","extra":1}]}\n',
+        b'{"status":"ok","actor":"worker","items":[{"kind":"unknown","urn":"x"}]}\n',
+        b'{"status":"ok","actor":"worker","items":null}\n',
+    ],
+)
+def test_search_rejects_malformed_results(peer, response):
+    peer[0].response = response
+    with pytest.raises(peer_client.PeerClientError):
+        peer_client.request_peer(
+            os.path.abspath("peer.sock"), 123, {"search": {"query": "report"}}
+        )
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux SO_PEERCRED is required")
 @pytest.mark.parametrize("trusted", [True, False])
 def test_real_unix_peer_credentials(tmp_path, trusted):

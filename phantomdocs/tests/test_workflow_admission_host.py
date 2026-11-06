@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import nullcontext
 from copy import deepcopy
 
 import pytest
@@ -83,6 +84,40 @@ def test_host_rejects_other_actor_and_archive_requests(system, tmp_path, monkeyp
     }
 
 
+def test_host_search_uses_its_configured_store(system, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "phantomdocs.workflow_peer_search.resolve_peer_actor", lambda *_: "coordinator"
+    )
+    monkeypatch.setattr(
+        admission_host,
+        "load",
+        lambda path: seen.append(path) or deepcopy(system[6]),
+    )
+    monkeypatch.setattr(admission_host, "manifest_lock", lambda _path: nullcontext())
+
+    def controlled_serve(_listener, context_factory, *, policy_lock, load_org):
+        with context_factory(load_org()) as context:
+            connection = ServerConnection(b'{"search":{"query":""}}\n')
+            serve_connection(connection, **context)
+            return json.loads(connection.response)
+
+    monkeypatch.setattr(admission_host, "serve_one", controlled_serve)
+    result = admission_host.serve_admission_once(
+        "listener",
+        identity_map="/protected/map",
+        ledger_path=tmp_path / "ledger.sqlite",
+        policy_lock="/protected/policy.lock",
+        load_org=lambda: deepcopy(system[2]),
+        load_installation=lambda: deepcopy(system[1]),
+        processor=system[4],
+        search_store_path=tmp_path / "trusted-store",
+    )
+    assert result["status"] == "ok"
+    assert result["actor"] == "coordinator"
+    assert seen == [str(tmp_path / "trusted-store" / "manifest.yaml")]
+
+
 def test_host_accepts_the_authenticated_requester_without_phantombot_config(
     system, tmp_path, monkeypatch
 ):
@@ -123,6 +158,7 @@ def test_configured_host_passes_only_protected_settings(
         "policy_lock": "/protected/policy.lock",
         "org_path": "/protected/org.yaml",
         "installation_path": "/protected/installation.json",
+        "store_path": str(tmp_path / "store"),
         "processor_config_path": None if requester_mode else "/protected/bot.toml",
         "processor_state_path": None,
         "server_uid": server_uid,
