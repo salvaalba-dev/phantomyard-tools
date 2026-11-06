@@ -164,3 +164,31 @@ def test_protocol_returns_generic_denial_without_details(monkeypatch, system):
         search_guard=nullcontext,
     )
     assert json.loads(connection.response) == {"status": "rejected"}
+
+
+def test_protocol_audit_filters_and_redacts(monkeypatch, system):
+    from phantomdocs import workflow_peer_lookup as peer_lookup
+
+    monkeypatch.setattr(peer_lookup, "resolve_peer_actor", lambda *_: "coordinator")
+    entry = {
+        "ts": "2026-01-01T00:00:00Z",
+        "actor": "coordinator",
+        "action": "add",
+        "urn": "urn:example-org:doc:project-reports/source",
+        "mac": "2" * 64,
+        "details": {"private": "not-in-response"},
+    }
+    connection = Connection(b'{"lookup":{"operation":"audit","limit":10}}\n')
+    serve_connection(
+        connection,
+        identity_map="/protected/map",
+        ledger=object(),
+        org=system[2],
+        make_plan=lambda _: None,
+        load_search_manifest=lambda: system[6],
+        load_audit=lambda: (json.dumps(entry) + "\n").encode(),
+        search_guard=nullcontext,
+    )
+    response = json.loads(connection.response)
+    assert response["status"] == "ok" and len(response["result"]) == 1
+    assert b"not-in-response" not in connection.response

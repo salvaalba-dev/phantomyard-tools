@@ -26,19 +26,21 @@ def search_configured(query, *, actor, org_yaml, root, config_path=DEFAULT_CONFI
     return result["items"]
 
 
-def lookup_configured(operation, ref, *, actor, org_yaml, root, mac=None):
+def lookup_configured(operation, ref, *, actor, org_yaml, root, mac=None, limit=None):
     """Resolve an authorized reference or version history through the peer."""
     payload = {"operation": operation}
     if ref is not None:
         payload["ref"] = ref
     if mac is not None:
         payload["mac"] = mac
+    if limit is not None:
+        payload["limit"] = limit
     result = _request_configured(
         {"lookup": payload},
         actor=actor,
         org_yaml=org_yaml,
         root=root,
-        allow_implicit=operation in {"status", "refs"},
+        allow_implicit=operation in {"status", "refs", "audit"},
     )["result"]
     if operation in {"reference", "content-reference"} and any(
         value and not value.isprintable() for value in result.values()

@@ -230,6 +230,26 @@ def test_rejects_invalid_scoped_status_counts(peer):
         )
 
 
+def test_audit_response_allows_only_redacted_rows(peer):
+    row = {
+        "ts": "2026-01-01T00:00:00Z",
+        "actor": "worker",
+        "action": "add",
+        "urn": "urn:example:doc:report",
+        "mac": "a" * 64,
+    }
+    payload = {"lookup": {"operation": "audit", "limit": 50}}
+    response = {"status": "ok", "actor": "worker", "result": [row]}
+    peer[0].response = (json.dumps(response) + "\n").encode()
+    assert (
+        peer_client.request_peer(os.path.abspath("peer.sock"), 123, payload) == response
+    )
+    response["result"][0]["details"] = {"hidden": "data"}
+    peer[0].response = (json.dumps(response) + "\n").encode()
+    with pytest.raises(peer_client.PeerClientError):
+        peer_client.request_peer(os.path.abspath("peer.sock"), 123, payload)
+
+
 @pytest.mark.parametrize(
     "row",
     [

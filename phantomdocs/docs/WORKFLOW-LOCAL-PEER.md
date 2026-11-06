@@ -125,7 +125,18 @@ When the manifest is inaccessible, `pd status` and `pd refs` also use the
 protected peer. The status counts include only nodes the local actor can read;
 reference names are returned only when their targets are readable. These
 commands identify the actor through the operating-system peer rather than a
-caller-supplied actor flag. The audit log and other commands remain separate.
+caller-supplied actor flag.
+
+When the audit file is inaccessible, `pd audit` can return a filtered view from
+the same peer. It includes only recognized document events whose recorded
+version and current version are both readable, and strips event details,
+signatures, hashes of preceding entries and sequence numbers. Unknown, unbound
+or unauthorized events are omitted. This is a limited activity view, not the
+complete audit chain and not a substitute for an administrator's integrity
+verification. Limits are 100 returned entries and an 8 MiB input file; an
+oversized, changed, invalid-JSON or symlinked audit file fails closed. The peer
+reads the log while holding the native manifest lock, so all audit writers must
+use that same lock. Other commands remain separate.
 
 This check controls the CLI response. It cannot revoke access already granted
 to the user's Drive account, prevent that user from calling Drive directly, or

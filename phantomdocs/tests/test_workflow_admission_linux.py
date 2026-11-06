@@ -108,6 +108,7 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
         ({"lookup": {"operation": "content-reference", "ref": "source"}}, "rejected"),
         ({"lookup": {"operation": "reference", "ref": "project-reports"}}, "reference"),
         ({"lookup": {"operation": "status"}}, "status"),
+        ({"lookup": {"operation": "audit", "limit": 10}}, "audit"),
     ],
 )
 def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
@@ -130,6 +131,20 @@ def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
         private.mkdir(mode=0o700)
         (private / "manifest.yaml").write_text(
             yaml.safe_dump(system[6]), encoding="utf-8"
+        )
+        (private / "audit.log").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-01-01T00:00:00Z",
+                    "actor": "coordinator",
+                    "action": "mkdir",
+                    "urn": "urn:example-org:folder:project-reports",
+                    "mac": "1" * 64,
+                    "details": {"private": "not-in-response"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.bind(socket_path)
@@ -182,10 +197,14 @@ def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
                         "location": "",
                     },
                 }
-            else:
+            elif expected == "status":
                 assert result["status"] == "ok"
                 assert result["actor"] == "coordinator"
                 assert result["result"]["nodes"] == 1
+            else:
+                assert result["status"] == "ok"
+                assert len(result["result"]) == 1
+                assert "details" not in result["result"][0]
         finally:
             os.close(read_fd)
             listener.close()

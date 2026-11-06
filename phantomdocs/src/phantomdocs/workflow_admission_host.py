@@ -12,6 +12,7 @@ from pathlib import Path
 from phantomdocs.manifest import load, manifest_lock
 from phantomdocs.workflow_ledger import WorkflowLedger
 from phantomdocs.workflow_local_peer_service import serve_one
+from phantomdocs.workflow_peer_audit import load_audit_file
 from phantomdocs.workflows import load_registry, plan, validate_contract
 
 
@@ -63,6 +64,9 @@ def serve_admission_once(
                 )
                 context["search_guard"] = lambda: manifest_lock(
                     str(Path(search_store_path) / "manifest.yaml")
+                )
+                context["load_audit"] = lambda: load_audit_file(
+                    str(Path(search_store_path) / "audit.log")
                 )
             yield context
 

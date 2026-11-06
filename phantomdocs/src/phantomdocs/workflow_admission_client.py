@@ -177,6 +177,21 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
                         for row in result
                     ):
                         raise PeerClientError("invalid peer response")
+                elif operation == "audit":
+                    if not isinstance(result, list) or any(
+                        not isinstance(row, dict)
+                        or set(row) != {"ts", "actor", "action", "urn", "mac"}
+                        or any(
+                            not isinstance(row[k], str) or not row[k].isprintable()
+                            for k in row
+                        )
+                        or row["action"]
+                        not in {"add", "version", "mkdir", "rollback", "tag"}
+                        or len(row["mac"]) != 64
+                        or any(c not in "0123456789abcdef" for c in row["mac"])
+                        for row in result
+                    ):
+                        raise PeerClientError("invalid peer response")
                 elif operation == "status":
                     if (
                         not isinstance(result, dict)
