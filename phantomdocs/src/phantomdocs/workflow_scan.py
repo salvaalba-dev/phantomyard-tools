@@ -16,6 +16,7 @@ import click
 from .access import can_read, normalize_category
 from .manifest import node_by_path, node_by_slug, validate
 from .storage import location_uri
+from .workflow_source_fingerprint import reference_scan_id
 from .workflows import WorkflowError, digest, plan, reference_is_safe
 
 MAX_ITEMS = 1000
@@ -241,16 +242,7 @@ def scan(
                 )
         else:
             job = deepcopy(base)
-            job["request_id"] = "reference-" + digest(
-                {
-                    "organization": base["organization"],
-                    "ref": ref,
-                    "fingerprint": {
-                        k: item[k]
-                        for k in ("size", "version", "md5Checksum", "mimeType")
-                    },
-                }
-            )
+            job["request_id"] = reference_scan_id(base["organization"], ref, item)
             job["artifacts"][0].update(ref=ref, media_type=item["mimeType"])
             proposed = plan(job, installation, org, registry, processor, caller)
             row.update(

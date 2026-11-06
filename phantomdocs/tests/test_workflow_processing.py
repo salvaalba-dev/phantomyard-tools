@@ -245,6 +245,88 @@ def test_reference_xlsx_prepares_without_index_or_drive_write(
         )
 
 
+@pytest.mark.parametrize("changed", [None, "version", "size", "checksum"])
+def test_scan_generated_job_pins_source_metadata(
+    staged, tmp_path, monkeypatch, changed
+):
+    import test_workflow_scan as scan_fixtures
+
+    from phantomdocs.workflow_scan import scan
+
+    org, install, _, _, source, _, _ = staged
+    install["routes"][0]["protocol"] = "reference-document"
+    install["processing"]["inputs"] = {
+        "original": {"media_types": ["audio/wav"], "extension": "wav"}
+    }
+    install["processing"]["outputs"] = {}
+    system = list(scan_fixtures.system.__wrapped__())
+    system[0]["items"][0] = {
+        **source.metadata("gdrive://document-001"),
+        "name": "synthetic.wav",
+    }
+    system[1], system[2] = install, org
+    job = scan(*system)["items"][0]["job"]
+    original_metadata = source.metadata
+
+    def metadata(ref):
+        value = original_metadata(ref)
+        if changed == "version":
+            value["version"] = "2"
+        elif changed == "size":
+            value["size"] = str(int(value["size"]) + 1)
+        elif changed == "checksum":
+            value["md5Checksum"] = "0" * 32
+        return value
+
+    monkeypatch.setattr(source, "metadata", metadata)
+
+    def build(value):
+        return plan(
+            value,
+            install,
+            org,
+            load_registry(),
+            ("coordinator", "phantombot-config"),
+            "coordinator",
+        )
+
+    path = tmp_path / "scan-ledger.sqlite"
+    with WorkflowLedger(path) as ledger:
+        ledger.accept_local(job, org, "coordinator", build)
+        with ProcessingAdapter(install, source) as adapter:
+            executor = WorkflowExecutor(ledger, path, adapter)
+            if changed:
+                with pytest.raises(WorkflowError, match="scanned proposal"):
+                    executor.prepare(
+                        job["organization"],
+                        job["request_id"],
+                        org,
+                        "coordinator",
+                        build,
+                    )
+                with pytest.raises(WorkflowError, match="uncertain operation"):
+                    executor.prepare(
+                        job["organization"],
+                        job["request_id"],
+                        org,
+                        "coordinator",
+                        build,
+                    )
+                assert source.downloads == 0
+            else:
+                assert (
+                    executor.prepare(
+                        job["organization"],
+                        job["request_id"],
+                        org,
+                        "coordinator",
+                        build,
+                    )["state"]
+                    == "awaiting-archive"
+                )
+                assert source.downloads == 1
+
+
 def test_wrong_intake_and_fake_wav_are_refused(staged):
     staged[4].wrong = True
     with pytest.raises(WorkflowError, match="authorized intake"):

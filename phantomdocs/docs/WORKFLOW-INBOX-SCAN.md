@@ -60,6 +60,11 @@ version: proposals explicitly return `document_version: null`. The request ID is
 stable for the same organization, reference and fingerprint; metadata ordering
 does not create another request. A changed provider revision produces another
 proposal, not an automatic document version or authorization to overwrite one.
+Before downloading a scan-generated reference job, the processing adapter
+recomputes this request ID from fresh Drive metadata and holds a changed source
+for reconciliation. This is not an authentication mechanism: an arbitrary job
+with another request-ID format does not acquire a scan pin, and authenticated
+intake, semantic identity and archive verification remain separate requirements.
 
 ## Usage
 

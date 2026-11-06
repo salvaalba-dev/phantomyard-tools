@@ -25,6 +25,7 @@ from .workflow_commands import build_command
 from .workflow_executor import execution_lock
 from .workflow_reconcile import OBSERVATION_FIELDS
 from .workflow_runner import file_hash, run_transform, validate_output, verify_binding
+from .workflow_source_fingerprint import reference_scan_id
 from .workflow_xlsx import validate_xlsx
 from .workflows import WorkflowError, digest, validate_contract
 
@@ -356,6 +357,18 @@ class ProcessingAdapter:
                         "source does not match the authorized intake and media policy"
                     )
                 metadata.append(value)
+            if (
+                planned["protocol"]["id"] == "reference-document"
+                and re.fullmatch(r"reference-[0-9a-f]{64}", planned["request_id"])
+                and (
+                    len(inputs) != 1
+                    or reference_scan_id(
+                        planned["organization"], inputs[0]["ref"], metadata[0]
+                    )
+                    != planned["request_id"]
+                )
+            ):
+                raise WorkflowError("source no longer matches the scanned proposal")
             receipt, snapshots = [], []
             for number, artifact in enumerate(inputs):
                 spec = self.profile["inputs"][artifact["role"]]
