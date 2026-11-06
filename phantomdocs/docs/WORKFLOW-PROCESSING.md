@@ -68,8 +68,12 @@ Do not regard the profile scaffold as a completed AU runtime configuration.
 ## Source boundary and format validation
 
 The installed Drive reader must confirm the exact file ID, non-trashed state,
-parent membership in the pinned organizational intake, binary size and declared
-MIME type before any media download. All sources are checked before staging.
+parent membership in the pinned organizational intake, binary size, version,
+MD5 checksum and declared MIME type before any media download. All sources are
+checked before staging. The reader refreshes metadata after downloading, checks
+the returned reference, and compares the snapshot with the provider checksum.
+Changed or incomplete evidence fails closed and requires reconciliation. These
+observations do not lock Drive or bind the snapshot to an earlier scan.
 A requester cannot use this adapter to read arbitrary server file paths or another
 Drive folder just because their category permits reading the job. Shared intake
 membership is necessary; deployment intake provenance/request binding remains

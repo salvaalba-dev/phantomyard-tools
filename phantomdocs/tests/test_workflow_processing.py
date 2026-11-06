@@ -1,5 +1,6 @@
 """Actual staged subprocess chain with fake authorized Drive inputs."""
 
+import hashlib
 import io
 import json
 import sys
@@ -123,7 +124,14 @@ def staged(tmp_path):
                 "trashed": False,
                 "size": str(len(self.data)),
                 "mimeType": "audio/wav",
+                "version": "1",
+                "md5Checksum": hashlib.md5(
+                    self.data, usedforsecurity=False
+                ).hexdigest(),
             }
+
+        def refresh_metadata(self, ref):
+            return self.metadata(ref)
 
         def read_reference(self, ref, **kwargs):
             self.downloads += 1
@@ -184,6 +192,54 @@ def test_wrong_intake_and_fake_wav_are_refused(staged):
     with pytest.raises(WorkflowError, match="authorized intake"):
         prepare(staged)
     assert staged[4].downloads == 0 and not staged[6].exists()
+
+
+@pytest.mark.parametrize("change", ["version", "parent", "checksum", "reference"])
+def test_source_changed_during_download_is_not_processed(staged, monkeypatch, change):
+    source = staged[4]
+    original_read = source.read_reference
+    original_metadata = source.metadata
+
+    def read(ref, **kwargs):
+        content, location = original_read(ref, **kwargs)
+        if change == "reference":
+            location["ref"] = "different"
+        return content, location
+
+    def metadata(ref):
+        result = original_metadata(ref)
+        if source.downloads and change == "version":
+            result["version"] = "2"
+        elif source.downloads and change == "parent":
+            result["parents"] = ["other"]
+        elif change == "checksum":
+            result["md5Checksum"] = "0" * 32
+        return result
+
+    monkeypatch.setattr(source, "read_reference", read)
+    monkeypatch.setattr(source, "metadata", metadata)
+    with pytest.raises(WorkflowError):
+        prepare(staged)
+    assert not staged[6].exists()
+    with pytest.raises(WorkflowError):
+        prepare(staged)
+    assert source.downloads == 1
+
+
+@pytest.mark.parametrize("missing", ["version", "md5Checksum"])
+def test_source_without_fingerprint_is_not_downloaded(staged, monkeypatch, missing):
+    source = staged[4]
+    original_metadata = source.metadata
+
+    def metadata(ref):
+        result = original_metadata(ref)
+        del result[missing]
+        return result
+
+    monkeypatch.setattr(source, "metadata", metadata)
+    with pytest.raises(WorkflowError, match="authorized intake"):
+        prepare(staged)
+    assert source.downloads == 0 and not staged[6].exists()
 
 
 def test_invalid_recording_bytes_are_not_transcribed(staged):
