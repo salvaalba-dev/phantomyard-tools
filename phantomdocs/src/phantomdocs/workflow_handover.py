@@ -192,6 +192,7 @@ def index_archive(
                 owners=planned["classification"]["owners"],
                 folder=planned["destinations"]["logical_folder"],
                 expected_hash=artifact["sha256"],
+                hold_matching_content=True,
                 reader=no_read
                 if row and row["state"] == "complete"
                 else drive_reader.read_reference,

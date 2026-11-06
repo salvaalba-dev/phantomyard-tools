@@ -25,6 +25,7 @@ from typing import Any
 
 from .access import (
     can_administer_namespace,
+    can_read,
     can_write,
     key_valid_now,
     load_org,
@@ -180,6 +181,27 @@ def _sign_fields(
         "sig": sign_mutation(nsec, envelope),
         "sigPubkey": pubkey_from_nsec(nsec),
     }
+
+
+def _readable_content_match(repo, org, actor, category, expected_hash):
+    """Detect a possible duplicate in readable history of the same category.
+
+    A hash match is a reason to stop for review, not proof of document identity.
+    Both the historical version and its current head must be readable.
+    """
+    wanted = normalize_category(category)
+    for node in repo.data["nodes"]:
+        if (
+            node.get("kind") != "doc"
+            or normalize_category(node["category"]) != wanted
+            or node.get("contentHash") != expected_hash
+            or not can_read(org, actor, node["category"])
+        ):
+            continue
+        current = repo.node_by_urn(node["urn"])
+        if current is not None and can_read(org, actor, current["category"]):
+            return True
+    return False
 
 
 class DocumentService:
@@ -581,7 +603,16 @@ class DocumentService:
             )
 
     def index_reference_once(
-        self, *, ref, slug, category, folder, owners, expected_hash=None, reader=None
+        self,
+        *,
+        ref,
+        slug,
+        category,
+        folder,
+        owners,
+        expected_hash=None,
+        reader=None,
+        hold_matching_content=False,
     ):
         """Index a new external ref; existing refs skip byte reads and hashing.
 
@@ -605,6 +636,10 @@ class DocumentService:
 
             if not is_valid_hex64(expected_hash):
                 raise DocumentError("invalid expected reference hash")
+        if type(hold_matching_content) is not bool or (
+            hold_matching_content and expected_hash is None
+        ):
+            raise DocumentError("duplicate review requires an expected content hash")
         with manifest_lock(_manifest_path(self.root)):
             repo = self._load_repo()
             parent = (
@@ -645,6 +680,10 @@ class DocumentService:
                 return {"unchanged": True, "urn": hits[-1]["urn"]}
             if not can_write(self.org, self.actor_id, category, owners):
                 raise DocumentError("denied: cannot index reference")
+            if hold_matching_content and _readable_content_match(
+                repo, self.org, self.actor_id, category, expected_hash
+            ):
+                raise DocumentError("possible duplicate content; review required")
             logical = (urn_path(parent["urn"]) + "/" if parent else "") + slug
             if repo.node_by_urn(f"urn:{repo.org}:doc:{logical}"):
                 raise DocumentError(

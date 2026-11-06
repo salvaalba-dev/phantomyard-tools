@@ -1,5 +1,6 @@
 """Reference deduplication stays inside the real service/manifest lock."""
 
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -94,6 +95,99 @@ def test_concurrent_reference_ingest_has_one_read_and_one_node(tmp_path, monkeyp
     assert len(calls) == 1
     assert sum(r.get("unchanged", False) for r in results) == 3
     assert len(_repo(root).data["nodes"]) == 1
+
+
+def test_distinct_reference_with_same_content_is_held_without_a_second_read(tmp_path):
+    root, _, service = _svc(tmp_path)
+    data = b"synthetic original"
+    checksum = hashlib.sha256(data).hexdigest()
+    calls = []
+
+    def read(ref, **kwargs):
+        calls.append(ref)
+        return data, {"backend": "gdrive", "ref": ref.split("://")[1]}
+
+    args = {
+        "ref": "gdrive://first",
+        "slug": "first",
+        "category": "category-1",
+        "folder": None,
+        "owners": ["cfo"],
+        "expected_hash": checksum,
+        "reader": read,
+        "hold_matching_content": True,
+    }
+    service.index_reference_once(**args)
+    with pytest.raises(DocumentError, match="review required"):
+        service.index_reference_once(
+            **{**args, "ref": "gdrive://second", "slug": "second"}
+        )
+    assert calls == ["gdrive://first"]
+    assert len([n for n in _repo(root).data["nodes"] if n["kind"] == "doc"]) == 1
+    assert service.index_reference_once(**args)["unchanged"]
+
+
+def test_concurrent_distinct_refs_with_same_content_leave_one_node(tmp_path):
+    root, org, _ = _svc(tmp_path)
+    data = b"concurrent synthetic original"
+    checksum = hashlib.sha256(data).hexdigest()
+
+    def run(number):
+        def read(ref, **kwargs):
+            return data, {"backend": "gdrive", "ref": ref.split("://")[1]}
+
+        service = DocumentService(root, org, "roberto")
+        try:
+            service.index_reference_once(
+                ref=f"gdrive://file-{number}",
+                slug=f"file-{number}",
+                category="category-1",
+                folder=None,
+                owners=["cfo"],
+                expected_hash=checksum,
+                reader=read,
+                hold_matching_content=True,
+            )
+            return "indexed"
+        except DocumentError as exc:
+            assert "review required" in str(exc)
+            return "held"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(run, (1, 2)))
+    assert sorted(results) == ["held", "indexed"]
+    assert len([n for n in _repo(root).data["nodes"] if n["kind"] == "doc"]) == 1
+
+
+def test_match_to_historical_version_holds_new_reference(tmp_path):
+    root, _, service = _svc(tmp_path)
+    for data in (b"old synthetic bytes", b"new synthetic bytes"):
+        service.add_document(
+            content=data,
+            ref_location=None,
+            slug="original",
+            category="category-1",
+            folder=None,
+            owners=["cfo"],
+            backend=None,
+        )
+    assert len(_repo(root).versions_of("urn:org:doc:original")) == 2
+
+    def no_read(*args, **kwargs):
+        pytest.fail("historical match must be held before reading")
+
+    with pytest.raises(DocumentError, match="review required"):
+        service.index_reference_once(
+            ref="gdrive://copy",
+            slug="copy",
+            category="category-1",
+            folder=None,
+            owners=["cfo"],
+            expected_hash=hashlib.sha256(b"old synthetic bytes").hexdigest(),
+            reader=no_read,
+            hold_matching_content=True,
+        )
+    assert len(_repo(root).versions_of("urn:org:doc:original")) == 2
 
 
 def test_cli_reference_skip_uses_real_service_without_copying(tmp_path, monkeypatch):

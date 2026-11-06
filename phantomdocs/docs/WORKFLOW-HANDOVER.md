@@ -166,6 +166,16 @@ and uses the service's locked reference deduplication. It finds the existing nod
 without redownloading or re-hashing. A partial set can resume its missing indexes;
 confirmed nodes stay unchanged. This is index reconciliation, not upload replay.
 
+For a new reference, the archive consumer also holds indexing for review if its
+verified SHA-256 matches a readable historical version in the same category and
+its current head is readable. The check and insertion share the manifest lock.
+The response does not identify the matching document, and a match is not treated
+as proof that the two references represent the same document. It is a scoped
+precaution, not a complete semantic-identity check: it cannot prove uniqueness
+across categories, inaccessible documents, the project matrix or other systems.
+If a later artifact in a multi-artifact receipt is held, earlier completed indexes
+remain in the ledger and must be reconciled rather than repeated or deleted.
+
 Changed refs, slugs, manifest intent, store identity, categories, owners, SHA-256
 or archive destinations conflict rather than silently reclassifying or redirecting.
 Duplicate roles/refs/slugs, missing final artifacts, changed policy, wrong processor,
