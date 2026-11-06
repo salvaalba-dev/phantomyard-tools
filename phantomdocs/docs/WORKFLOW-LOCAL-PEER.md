@@ -39,7 +39,7 @@ tests and deployment.
 ## Supervised admission host
 
 `python -m phantomdocs.workflow_admission_activation --config CONFIG` provides
-an admission-only host for one systemd-activated Unix stream listener. It
+an admission and protected-search host for one systemd-activated Unix stream listener. It
 requires Linux, a root-owned socket under root-controlled directories, a private
 ledger for its service UID, and root-controlled configuration files. The host
 verifies its configured server UID and obtains each caller's UID from the kernel;
@@ -91,6 +91,31 @@ root-controlled configuration. It verifies the target store, organization and
 server UID before sending. A received response acknowledges a request only:
 it does not confirm semantic identity, execution, archiving or registration.
 After a lost response, reconcile the request before attempting it again.
+
+## Protected search
+
+The configured local host also supports a bounded search of its configured
+manifest. It derives the actor from the connecting operating-system account,
+loads the current organization while holding the shared policy lock and returns
+only search results permitted by PhantomOrg. The request cannot supply an actor,
+category, policy or path. The response is capped and fails instead of returning
+an incomplete result when the cap is exceeded. The service also holds the native
+manifest lock until the reply is sent, so a cooperating classification writer
+cannot change the document category during that request. A completed response
+cannot be recalled after a later access change.
+
+When `pd search` cannot read the local manifest and the root-controlled default
+host configuration exists, the command attempts this protected service. The
+declared CLI actor, organization and root must match the authenticated service
+response and protected configuration. Other deployments continue to use their
+existing local search behavior.
+
+This is not a complete filesystem security boundary on its own. If the caller
+can read the manifest directly, it can inspect its contents outside the search
+service. Administrators must protect the manifest and all alternate copies,
+inventory other consumers, and test their access before changing filesystem
+permissions. Other commands, Drive access and workflow processing are separate
+integration work. Do not enable a production configuration on this basis alone.
 
 The existing policy synchronization and other deployment writers must use the
 same lock before this host is enabled. An inbox processor, workflow execution,

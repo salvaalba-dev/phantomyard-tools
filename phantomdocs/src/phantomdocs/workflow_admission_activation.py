@@ -1,4 +1,4 @@
-"""Experimental systemd socket activation for local admission only.
+"""Experimental systemd socket activation for local admission and search.
 
 This host does not process requests, register documents, move Drive objects,
 or configure policy synchronization. It must not be deployed until every

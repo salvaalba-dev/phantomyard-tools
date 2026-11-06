@@ -196,13 +196,15 @@ def _resolve_actor(explicit: str | None) -> str | None:
 
 
 def _require_acl(org_yaml: str | None, actor: str | None = None):
-    """Return ``(actor, org)`` for an ACL-gated command, or raise a
+    """Return ``(actor, org)`` for an ACL-filtered command, or raise a
     ClickException (fail-closed) when the org model or actor is absent.
 
     ``--org-yaml`` must be supplied. The actor is resolved by layered
     precedence (``--actor`` → ``PHANTOMDOCS_ACTOR`` → OS username) and must
     be a declared actor in the org model; an unmapped actor is denied
     (fail-closed). Without all of these, access is denied — never fail-open.
+    The actor flag and environment variable are not authentication. Direct
+    store access requires a trusted local caller and filesystem protection.
     """
     if not org_yaml:
         raise click.ClickException(
@@ -669,8 +671,21 @@ def classification_local_apply(review_path, trusted_local, org_yaml, actor, root
 def search(query, org_yaml, actor, root):
     """Search the manifest index (urn, slug, meta).
 
-    Access-controlled: only nodes the actor may read are returned (fail-closed).
+    Only nodes the resolved actor may read are returned. Direct local search
+    trusts the actor supplied by its caller; the protected peer fallback
+    authenticates the local account before filtering.
     """
+    from .workflow_admission_search import DEFAULT_CONFIG, search_configured
+
+    if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        items = search_configured(
+            query, actor=_resolve_actor(actor), org_yaml=org_yaml, root=root
+        )
+        if not items:
+            click.echo("no matches")
+        for node in items:
+            click.echo(f"{node['kind']:6} {node['urn']}")
+        return
     manifest = _load_or_die(root)
     actor_id, org = _require_acl(org_yaml, actor)
     needle = query.lower()

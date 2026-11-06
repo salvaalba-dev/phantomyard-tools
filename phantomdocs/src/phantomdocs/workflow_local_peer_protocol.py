@@ -1,4 +1,4 @@
-"""Bounded single-request local workflow admission and archive protocol.
+"""Bounded local workflow admission, search and archive protocol.
 
 The trusted host owns the listener, configuration, ledger lifecycle, and audit
 logging. This module does not provide a daemon, move files, synchronize policy
@@ -9,6 +9,7 @@ import json
 
 from .workflow_local_peer import accept_peer_job
 from .workflow_local_peer_archive import index_peer_archive
+from .workflow_peer_search import search_peer
 
 MAX_REQUEST_BYTES = 64 * 1024
 
@@ -38,16 +39,29 @@ def _read_request(connection):
         object_pairs_hook=_unique,
         parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid constant")),
     )
-    if not isinstance(request, dict) or set(request) not in ({"job"}, {"archive"}):
+    if not isinstance(request, dict) or set(request) not in (
+        {"job"},
+        {"archive"},
+        {"search"},
+    ):
         raise ValueError("invalid request")
     return request
 
 
 def serve_connection(
-    connection, *, identity_map, ledger, org, make_plan, archive_context=None
+    connection,
+    *,
+    identity_map,
+    ledger,
+    org,
+    make_plan,
+    archive_context=None,
+    load_search_manifest=None,
+    search_guard=None,
 ):
     """Handle one request using exclusively host-provided trusted context."""
     connection.settimeout(5)
+    sending_search = False
     try:
         request = _read_request(connection)
         if "job" in request:
@@ -60,7 +74,7 @@ def serve_connection(
                 make_plan=make_plan,
             )
             status = "blocked" if result.get("state") == "blocked" else "received"
-        else:
+        elif "archive" in request:
             if archive_context is None:
                 raise ValueError("archive indexing is unavailable")
             index_peer_archive(
@@ -72,8 +86,27 @@ def serve_connection(
                 **archive_context,
             )
             status = "indexed"
-        response = {"status": status}
+        else:
+            if load_search_manifest is None or search_guard is None:
+                raise ValueError("search is unavailable")
+            with search_guard():
+                response = search_peer(
+                    connection,
+                    request["search"],
+                    identity_map=identity_map,
+                    org=org,
+                    load_manifest=load_search_manifest,
+                )
+                sending_search = True
+                connection.sendall(
+                    (json.dumps(response, separators=(",", ":")) + "\n").encode()
+                )
+            return
+        if "search" not in request:
+            response = {"status": status}
     except Exception:  # noqa: BLE001
         # A caller cannot distinguish authorization, parser, or storage failures.
+        if sending_search:
+            return
         response = {"status": "rejected"}
     connection.sendall((json.dumps(response, separators=(",", ":")) + "\n").encode())

@@ -1,4 +1,4 @@
-"""Connect protected host configuration to one supervised admission request.
+"""Connect protected configuration to a supervised admission or search request.
 
 This remains an experimental integration: the caller must supervise the socket,
 protect the private ledger, and coordinate every policy writer. No processing,
@@ -29,6 +29,7 @@ def serve_configured_once(listener, config_path, *, expected_socket=None):
         policy_lock=config["policy_lock"],
         load_org=lambda: load_policy(config["org_path"]),
         load_installation=lambda: load_installation(config["installation_path"]),
+        search_store_path=config["store_path"],
         processor=(
             load_processor(
                 config["processor_config_path"], config["processor_state_path"]

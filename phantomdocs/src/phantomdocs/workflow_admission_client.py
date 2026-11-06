@@ -13,9 +13,11 @@ import sys
 
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 4096
+MAX_SEARCH_RESPONSE_BYTES = 128 * 1024
 STATUSES = {
     "job": {"received", "blocked", "rejected"},
     "archive": {"indexed", "rejected"},
+    "search": {"ok", "rejected"},
 }
 
 
@@ -48,7 +50,7 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
         or type(expected_server_uid) is not int
         or expected_server_uid < 0
         or not isinstance(request, dict)
-        or set(request) not in ({"job"}, {"archive"})
+        or set(request) not in ({"job"}, {"archive"}, {"search"})
     ):
         raise PeerClientError("invalid peer service configuration or request")
     try:
@@ -59,6 +61,9 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
         raise PeerClientError("invalid peer request") from exc
     if len(raw) > MAX_REQUEST_BYTES:
         raise PeerClientError("peer request exceeds limit")
+    max_response = (
+        MAX_SEARCH_RESPONSE_BYTES if "search" in request else MAX_RESPONSE_BYTES
+    )
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(timeout)
@@ -72,13 +77,11 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
             connection.sendall(raw + b"\n")
             response = bytearray()
             while b"\n" not in response:
-                part = connection.recv(
-                    min(4096, MAX_RESPONSE_BYTES + 2 - len(response))
-                )
+                part = connection.recv(min(4096, max_response + 2 - len(response)))
                 if not part:
                     raise PeerClientError("peer outcome requires reconciliation")
                 response.extend(part)
-                if len(response) > MAX_RESPONSE_BYTES + 1:
+                if len(response) > max_response + 1:
                     raise PeerClientError("invalid peer response")
             if not response.endswith(b"\n") or response.count(b"\n") != 1:
                 raise PeerClientError("invalid peer response")
@@ -90,9 +93,25 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
             expected_statuses = STATUSES[next(iter(request))]
             if (
                 not isinstance(value, dict)
-                or set(value) != {"status"}
-                or value["status"] not in expected_statuses
+                or value.get("status") not in expected_statuses
             ):
+                raise PeerClientError("invalid peer response")
+            if value["status"] == "ok" and "search" in request:
+                if (
+                    set(value) != {"status", "actor", "items"}
+                    or not isinstance(value["actor"], str)
+                    or not value["actor"]
+                    or not isinstance(value["items"], list)
+                    or any(
+                        not isinstance(item, dict)
+                        or set(item) != {"kind", "urn"}
+                        or item["kind"] not in {"doc", "folder"}
+                        or not isinstance(item["urn"], str)
+                        for item in value["items"]
+                    )
+                ):
+                    raise PeerClientError("invalid peer response")
+            elif set(value) != {"status"}:
                 raise PeerClientError("invalid peer response")
             return value
     except PeerClientError:

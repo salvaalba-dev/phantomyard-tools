@@ -1,4 +1,4 @@
-"""Experimental wiring for a supervised local admission host.
+"""Experimental wiring for a supervised local admission and search host.
 
 This does not create a daemon, configure the OS, authorize a remote human,
 execute jobs, move files, or register documents. Every argument must originate
@@ -7,7 +7,9 @@ from protected deployment configuration, never from a connected peer.
 
 from contextlib import contextmanager
 from copy import deepcopy
+from pathlib import Path
 
+from phantomdocs.manifest import load, manifest_lock
 from phantomdocs.workflow_ledger import WorkflowLedger
 from phantomdocs.workflow_local_peer_service import serve_one
 from phantomdocs.workflows import load_registry, plan, validate_contract
@@ -22,8 +24,9 @@ def serve_admission_once(
     load_org,
     load_installation,
     processor,
+    search_store_path=None,
 ):
-    """Admit one kernel-identified peer using fresh policy and private ledger.
+    """Serve one kernel-identified peer using fresh policy and private ledger.
 
     The deployment must protect the socket, ledger, identity map, policy,
     installation and configuration, and all policy writers must cooperate
@@ -48,12 +51,20 @@ def serve_admission_once(
             return plan(job, installation, org, registry, processor, job["requester"])
 
         with WorkflowLedger(ledger_path) as ledger:
-            yield {
+            context = {
                 "identity_map": identity_map,
                 "ledger": ledger,
                 "org": org,
                 "make_plan": make_plan,
             }
+            if search_store_path is not None:
+                context["load_search_manifest"] = lambda: load(
+                    str(Path(search_store_path) / "manifest.yaml")
+                )
+                context["search_guard"] = lambda: manifest_lock(
+                    str(Path(search_store_path) / "manifest.yaml")
+                )
+            yield context
 
     return serve_one(
         listener, context_factory, policy_lock=policy_lock, load_org=load_org
