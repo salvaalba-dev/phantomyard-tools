@@ -7,7 +7,9 @@ import struct
 import zipfile
 import zlib
 from pathlib import PurePosixPath
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 
 from .workflows import WorkflowError
 
@@ -58,7 +60,9 @@ def _xml(package, name):
     payload = package.read(info).decode("utf-8-sig")
     if "<!DOCTYPE" in payload.upper() or "<!ENTITY" in payload.upper():
         raise WorkflowError("XLSX structural XML has a prohibited declaration")
-    return ElementTree.fromstring(payload)  # nosec B314 - bounded XML, DTD rejected
+    return ElementTree.fromstring(
+        payload, forbid_dtd=True, forbid_entities=True, forbid_external=True
+    )
 
 
 def validate_xlsx(path, max_bytes):
@@ -127,5 +131,6 @@ def validate_xlsx(path, max_bytes):
         zlib.error,
         zipfile.BadZipFile,
         ElementTree.ParseError,
+        DefusedXmlException,
     ) as exc:
         raise WorkflowError("invalid XLSX package") from exc
