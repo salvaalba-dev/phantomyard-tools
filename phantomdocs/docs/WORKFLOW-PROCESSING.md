@@ -138,8 +138,11 @@ recorded input snapshot hash and size, then copies it into that step's private
 working directory. A tool can alter that working copy only by causing a failure;
 it never receives the original Drive object or the only retained source snapshot.
 
-Native validators support UTF-8 text/Markdown, bounded PCM WAV and basic PDF
-header/end-marker checks. Other audio/video needs a hash-pinned probe returning
+Native validators support UTF-8 text/Markdown, bounded PCM WAV, basic PDF
+header/end-marker checks and bounded structural checks for transitional XLSX
+packages. XLSX checks do not evaluate formulas or sanitize embedded content;
+the validator rejects packages outside its resource and structure limits. Other
+audio/video needs a hash-pinned probe returning
 ffprobe-compatible JSON with an allowed container and appropriate stream type.
 See the official [ffprobe documentation](https://ffmpeg.org/ffprobe.html).
 These are format checks, not full media decoding, malware scanning or publication

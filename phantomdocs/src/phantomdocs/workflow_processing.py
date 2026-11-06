@@ -25,6 +25,7 @@ from .workflow_commands import build_command
 from .workflow_executor import execution_lock
 from .workflow_reconcile import OBSERVATION_FIELDS
 from .workflow_runner import file_hash, run_transform, validate_output, verify_binding
+from .workflow_xlsx import validate_xlsx
 from .workflows import WorkflowError, digest, validate_contract
 
 
@@ -49,7 +50,18 @@ def validate_input(path, media_type, specification, limits):
         raise WorkflowError("source media type has no declared processing validator")
     if media_type in ("text/plain", "text/markdown", "application/pdf"):
         return validate_output(path, media_type, limits["max_input_bytes"])
-    if media_type in ("audio/wav", "audio/x-wav"):
+    if (
+        media_type
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ):
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or not 0 < path.stat().st_size <= limits["max_input_bytes"]
+        ):
+            raise WorkflowError("missing, linked, empty or oversized XLSX input")
+        validate_xlsx(path, limits["max_input_bytes"])
+    elif media_type in ("audio/wav", "audio/x-wav"):
         try:
             with wave.open(str(path), "rb") as audio:
                 frames = audio.getnframes()
