@@ -187,6 +187,64 @@ def test_real_processing_produces_branded_files_without_drive_writes(staged):
     assert len(staged[6].read_text().splitlines()) == 4 and staged[4].downloads == 1
 
 
+def test_reference_xlsx_prepares_without_index_or_drive_write(
+    staged, tmp_path, monkeypatch
+):
+    from test_workflow_xlsx import MIME, package
+
+    org, install, job, _, source, _, _ = staged
+    book = tmp_path / "synthetic.xlsx"
+    package(book)
+    source.data = book.read_bytes()
+    old_metadata = source.metadata
+
+    def metadata(ref):
+        return {**old_metadata(ref), "mimeType": MIME}
+
+    monkeypatch.setattr(source, "metadata", metadata)
+    install["routes"][0]["protocol"] = "reference-document"
+    install["processing"]["inputs"] = {
+        "original": {"media_types": [MIME], "extension": "xlsx"}
+    }
+    install["processing"]["outputs"] = {}
+    job["requester"] = "coordinator"
+    job["artifacts"][0].update(role="original", media_type=MIME)
+
+    def build(value):
+        return plan(
+            value,
+            install,
+            org,
+            load_registry(),
+            ("coordinator", "phantombot-config"),
+            "coordinator",
+        )
+
+    path = tmp_path / "reference-ledger.sqlite"
+    with WorkflowLedger(path) as ledger:
+        ledger.accept_local(job, org, "coordinator", build)
+        with ProcessingAdapter(install, source) as adapter:
+            executor = WorkflowExecutor(ledger, path, adapter)
+            result = executor.prepare(
+                job["organization"], job["request_id"], org, "coordinator", build
+            )
+            assert (
+                executor.prepare(
+                    job["organization"], job["request_id"], org, "coordinator", build
+                )
+                == result
+            )
+        assert result["state"] == "awaiting-archive"
+        assert result["results"]["artifacts"][0]["media_type"] == MIME
+        assert source.downloads == 1
+        assert (
+            ledger.connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='workflow_archive_index'"
+            ).fetchone()
+            is None
+        )
+
+
 def test_wrong_intake_and_fake_wav_are_refused(staged):
     staged[4].wrong = True
     with pytest.raises(WorkflowError, match="authorized intake"):
