@@ -12,6 +12,35 @@ DEFAULT_CONFIG = "/etc/phantomdocs/admission.json"
 
 def search_configured(query, *, actor, org_yaml, root, config_path=DEFAULT_CONFIG):
     """Return only results from the configured service for this local actor."""
+    result = _request_configured(
+        {"search": {"query": query}},
+        actor=actor,
+        org_yaml=org_yaml,
+        root=root,
+        config_path=config_path,
+    )
+    for item in result["items"]:
+        if not item["urn"].isprintable():
+            raise click.ClickException("protected search unavailable or denied")
+    return result["items"]
+
+
+def lookup_configured(operation, ref, *, actor, org_yaml, root, mac=None):
+    """Resolve an authorized reference or version history through the peer."""
+    payload = {"operation": operation, "ref": ref}
+    if mac is not None:
+        payload["mac"] = mac
+    result = _request_configured(
+        {"lookup": payload}, actor=actor, org_yaml=org_yaml, root=root
+    )["result"]
+    if operation == "reference" and any(
+        value and not value.isprintable() for value in result.values()
+    ):
+        raise click.ClickException("protected lookup unavailable or denied")
+    return result
+
+
+def _request_configured(request, *, actor, org_yaml, root, config_path=DEFAULT_CONFIG):
     try:
         config = load_config(config_path)
         if (
@@ -23,14 +52,9 @@ def search_configured(query, *, actor, org_yaml, root, config_path=DEFAULT_CONFI
             or os.path.normpath(org_yaml) != config["org_path"]
         ):
             raise ValueError("search target does not match protected configuration")
-        result = request_peer(
-            config["socket_path"], config["server_uid"], {"search": {"query": query}}
-        )
+        result = request_peer(config["socket_path"], config["server_uid"], request)
         if result.get("status") != "ok" or result.get("actor") != actor:
             raise ValueError("search actor was not authenticated")
-        for item in result["items"]:
-            if not item["urn"].isprintable():
-                raise ValueError("invalid search result")
-        return result["items"]
+        return result
     except (OSError, ValueError, KeyError, TypeError, PeerClientError) as exc:
         raise click.ClickException("protected search unavailable or denied") from exc

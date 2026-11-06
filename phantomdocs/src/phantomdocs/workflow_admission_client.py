@@ -18,6 +18,7 @@ STATUSES = {
     "job": {"received", "blocked", "rejected"},
     "archive": {"indexed", "rejected"},
     "search": {"ok", "rejected"},
+    "lookup": {"ok", "rejected"},
 }
 
 
@@ -50,7 +51,8 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
         or type(expected_server_uid) is not int
         or expected_server_uid < 0
         or not isinstance(request, dict)
-        or set(request) not in ({"job"}, {"archive"}, {"search"})
+        or set(request) not in ({"job"}, {"archive"}, {"search"}, {"lookup"})
+        or ("lookup" in request and not isinstance(request["lookup"], dict))
     ):
         raise PeerClientError("invalid peer service configuration or request")
     try:
@@ -62,7 +64,9 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
     if len(raw) > MAX_REQUEST_BYTES:
         raise PeerClientError("peer request exceeds limit")
     max_response = (
-        MAX_SEARCH_RESPONSE_BYTES if "search" in request else MAX_RESPONSE_BYTES
+        MAX_SEARCH_RESPONSE_BYTES
+        if "search" in request or "lookup" in request
+        else MAX_RESPONSE_BYTES
     )
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -111,6 +115,37 @@ def request_peer(socket_path, expected_server_uid, request, *, timeout=5):
                     )
                 ):
                     raise PeerClientError("invalid peer response")
+            elif value["status"] == "ok" and "lookup" in request:
+                if (
+                    set(value) != {"status", "actor", "result"}
+                    or not isinstance(value["actor"], str)
+                    or not value["actor"]
+                ):
+                    raise PeerClientError("invalid peer response")
+                operation = request["lookup"].get("operation")
+                result = value["result"]
+                if operation == "reference":
+                    if (
+                        not isinstance(result, dict)
+                        or set(result) != {"urn", "location"}
+                        or not all(isinstance(result[k], str) for k in result)
+                    ):
+                        raise PeerClientError("invalid peer response")
+                elif operation == "versions":
+                    if not isinstance(result, list) or any(
+                        not isinstance(row, dict)
+                        or set(row) != {"mac", "size", "current"}
+                        or not isinstance(row["mac"], str)
+                        or len(row["mac"]) != 64
+                        or any(c not in "0123456789abcdef" for c in row["mac"])
+                        or type(row["size"]) is not int
+                        or row["size"] < 0
+                        or type(row["current"]) is not bool
+                        for row in result
+                    ):
+                        raise PeerClientError("invalid peer response")
+                else:
+                    raise PeerClientError("invalid peer request")
             elif set(value) != {"status"}:
                 raise PeerClientError("invalid peer response")
             return value

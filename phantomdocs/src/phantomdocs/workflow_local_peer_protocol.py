@@ -9,6 +9,7 @@ import json
 
 from .workflow_local_peer import accept_peer_job
 from .workflow_local_peer_archive import index_peer_archive
+from .workflow_peer_lookup import lookup_peer
 from .workflow_peer_search import search_peer
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -43,6 +44,7 @@ def _read_request(connection):
         {"job"},
         {"archive"},
         {"search"},
+        {"lookup"},
     ):
         raise ValueError("invalid request")
     return request
@@ -90,9 +92,10 @@ def serve_connection(
             if load_search_manifest is None or search_guard is None:
                 raise ValueError("search is unavailable")
             with search_guard():
-                response = search_peer(
+                handler = search_peer if "search" in request else lookup_peer
+                response = handler(
                     connection,
-                    request["search"],
+                    request["search"] if "search" in request else request["lookup"],
                     identity_map=identity_map,
                     org=org,
                     load_manifest=load_search_manifest,

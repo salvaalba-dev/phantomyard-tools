@@ -100,7 +100,15 @@ def test_real_unprivileged_peer_is_bound_to_phantomorg_actor(
     sys.platform != "linux" or not hasattr(os, "geteuid") or os.geteuid() != 0,
     reason="requires Linux root for a synthetic unprivileged peer",
 )
-def test_real_peer_search_filters_by_phantomorg_category():
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"search": {"query": ""}}, "search"),
+        ({"lookup": {"operation": "reference", "ref": "source"}}, "rejected"),
+        ({"lookup": {"operation": "reference", "ref": "project-reports"}}, "reference"),
+    ],
+)
+def test_real_peer_queries_filter_by_phantomorg_category(payload, expected):
     system = fixtures.system.__wrapped__()
     fixtures.index(system, category="category-3")
     with tempfile.TemporaryDirectory(prefix="pd-search-test-", dir="/run") as root:
@@ -135,9 +143,7 @@ def test_real_peer_search_filters_by_phantomorg_category():
                 os.setgroups([])
                 os.setgid(65534)
                 os.setuid(65534)
-                response = peer_client.request_peer(
-                    socket_path, 0, {"search": {"query": ""}}
-                )
+                response = peer_client.request_peer(socket_path, 0, payload)
                 os.write(write_fd, json.dumps(response).encode())
                 os._exit(0)
             except BaseException:  # noqa: BLE001 - never return into pytest in the child
@@ -158,10 +164,22 @@ def test_real_peer_search_filters_by_phantomorg_category():
             _, status = os.waitpid(pid, 0)
             assert os.waitstatus_to_exitcode(status) == 0
             result = json.loads(response)
-            assert result["actor"] == "coordinator"
-            assert result["items"] == [
-                {"kind": "folder", "urn": "urn:example-org:folder:project-reports"}
-            ]
+            if expected == "rejected":
+                assert result == {"status": "rejected"}
+            elif expected == "search":
+                assert result["actor"] == "coordinator"
+                assert result["items"] == [
+                    {"kind": "folder", "urn": "urn:example-org:folder:project-reports"}
+                ]
+            else:
+                assert result == {
+                    "status": "ok",
+                    "actor": "coordinator",
+                    "result": {
+                        "urn": "urn:example-org:folder:project-reports",
+                        "location": "",
+                    },
+                }
         finally:
             os.close(read_fd)
             listener.close()
