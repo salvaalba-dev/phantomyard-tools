@@ -141,9 +141,10 @@ def load_installation(path):
     return value
 
 
-def load_policy(path):
+def parse_policy(payload):
+    """Validate policy bytes with the same unambiguous parser at every boundary."""
     try:
-        loader = _UniqueLoader(_read_protected(path))
+        loader = _UniqueLoader(payload)
         try:
             value = loader.get_single_data()
         finally:
@@ -154,3 +155,7 @@ def load_policy(path):
         return value
     except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
         raise ValueError("invalid protected organization") from exc
+
+
+def load_policy(path):
+    return parse_policy(_read_protected(path))

@@ -11,6 +11,16 @@ from phantomdocs.workflow_policy_sync import synchronize
 
 @unittest.skipUnless(os.name == "posix" and os.geteuid() == 0, "requires root on Linux")
 class ProtectedSyncTests(unittest.TestCase):
+    def test_duplicate_nested_policy_is_not_published(self):
+        with tempfile.TemporaryDirectory(dir="/root") as root:
+            src, dst, lock = (Path(root) / name for name in ("src", "dst", "lock"))
+            lock.touch(mode=0o600)
+            src.write_text("version: 1\npermissions:\n  allow: true\n  allow: false\n")
+            dst.write_text("version: 1\nold: true\n")
+            with self.assertRaisesRegex(ValueError, "invalid protected organization"):
+                synchronize(str(src), str(dst), str(lock))
+            self.assertEqual(dst.read_text(), "version: 1\nold: true\n")
+
     def test_posix_acl_survives_policy_replacement(self):
         setfacl, getfacl = shutil.which("setfacl"), shutil.which("getfacl")
         if not setfacl or not getfacl:

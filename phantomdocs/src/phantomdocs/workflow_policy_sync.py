@@ -9,9 +9,7 @@ import os
 import secrets
 import stat
 
-import yaml
-
-from .access import validate_org_schema
+from .workflow_admission_config import parse_policy
 from .workflow_policy_guard import policy_guard
 from .workflow_protected_paths import open_protected_file, protected_parent
 
@@ -49,10 +47,7 @@ def synchronize(source, destination, lock_path):
                     or _identity(os.fstat(src)) != _identity(before)
                 ):
                     raise ValueError("invalid or changed source")
-                data = yaml.safe_load(payload)
-                if not isinstance(data, dict):
-                    raise ValueError("invalid organization")  # noqa: TRY004
-                validate_org_schema(data)
+                parse_policy(payload)
                 dst = open_protected_file(dest_dir, dest_name)
                 old = os.fstat(dst)
                 if (before.st_dev, before.st_ino) == (old.st_dev, old.st_ino):
