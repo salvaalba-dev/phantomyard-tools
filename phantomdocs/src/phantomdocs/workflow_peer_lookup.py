@@ -1,0 +1,70 @@
+"""Bounded metadata and history lookup for a kernel-authenticated local peer."""
+
+import json
+
+from .access import can_read
+from .manifest import node_by_mac, node_by_urn, resolve_node, validate, versions_of
+from .storage import location_uri
+from .workflow_local_identity import resolve_peer_actor
+from .workflow_peer_search import MAX_QUERY_BYTES, MAX_SEARCH_RESPONSE_BYTES
+
+
+def lookup_peer(connection, request, *, identity_map, org, load_manifest):
+    """Resolve authorized metadata while the host holds policy and store locks."""
+    if not isinstance(request, dict) or set(request) not in (
+        {"operation", "ref"},
+        {"operation", "ref", "mac"},
+    ):
+        raise ValueError("invalid lookup request")
+    operation, ref = request["operation"], request["ref"]
+    mac = request.get("mac")
+    if (
+        operation not in {"reference", "versions"}
+        or not isinstance(ref, str)
+        or not ref
+        or len(ref.encode("utf-8")) > MAX_QUERY_BYTES
+        or (mac is not None and (operation != "reference" or not isinstance(mac, str)))
+    ):
+        raise ValueError("invalid lookup request")
+    actor = resolve_peer_actor(identity_map, connection)
+    if not any(a.get("id") == actor for a in org.get("actors", [])):
+        raise ValueError("unknown actor")
+    manifest = load_manifest()
+    if not isinstance(manifest, dict) or validate(manifest):
+        raise ValueError("invalid manifest")
+    node = resolve_node(manifest, ref)
+    if mac:
+        selected = node_by_mac(manifest, mac)
+        if node is None or selected is None or node["urn"] != selected["urn"]:
+            raise ValueError("document unavailable")
+        node = selected
+    if node is None or not can_read(org, actor, node["category"]):
+        raise ValueError("document unavailable")
+    if operation == "reference":
+        locations = node.get("locations") or []
+        location = locations[0] if locations else {}
+        reference = (
+            location_uri(location) if "ref" in location else location.get("path", "")
+        )
+        result = {"urn": node["urn"], "location": reference}
+    else:
+        history = versions_of(manifest, node["urn"])
+        if any(not can_read(org, actor, version["category"]) for version in history):
+            raise ValueError("history unavailable")
+        current = node_by_urn(manifest, node["urn"])
+        current_mac = current["mac"] if current else None
+        result = [
+            {
+                "mac": version["mac"],
+                "size": version.get("size", 0),
+                "current": version["mac"] == current_mac,
+            }
+            for version in history
+        ]
+    response = {"status": "ok", "actor": actor, "result": result}
+    if (
+        len(json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode())
+        > MAX_SEARCH_RESPONSE_BYTES
+    ):
+        raise ValueError("lookup response exceeds limit")
+    return response

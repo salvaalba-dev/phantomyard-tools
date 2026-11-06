@@ -142,6 +142,40 @@ def test_search_rejects_malformed_results(peer, response):
         )
 
 
+def test_lookup_accepts_authorized_reference_shape(peer):
+    peer[0].response = (
+        b'{"status":"ok","actor":"worker","result":'
+        b'{"urn":"urn:example:doc:report","location":"gdrive://example"}}\n'
+    )
+    result = peer_client.request_peer(
+        os.path.abspath("peer.sock"),
+        123,
+        {"lookup": {"operation": "reference", "ref": "report"}},
+    )
+    assert result["result"]["location"] == "gdrive://example"
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"mac": "x" * 64, "size": 4, "current": True},
+        {"mac": "a" * 64, "size": -1, "current": True},
+        {"mac": "a" * 64, "size": 4, "current": 1},
+        {"mac": "a" * 64, "size": 4, "current": True, "extra": "hidden"},
+    ],
+)
+def test_lookup_rejects_malformed_history(peer, row):
+    peer[0].response = (
+        json.dumps({"status": "ok", "actor": "worker", "result": [row]}) + "\n"
+    ).encode()
+    with pytest.raises(peer_client.PeerClientError):
+        peer_client.request_peer(
+            os.path.abspath("peer.sock"),
+            123,
+            {"lookup": {"operation": "versions", "ref": "report"}},
+        )
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux SO_PEERCRED is required")
 @pytest.mark.parametrize("trusted", [True, False])
 def test_real_unix_peer_credentials(tmp_path, trusted):

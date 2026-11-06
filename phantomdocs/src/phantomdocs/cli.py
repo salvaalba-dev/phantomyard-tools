@@ -498,9 +498,25 @@ def add(
 def get(ref, mac, cat, backend, org_yaml, actor, root):
     """Resolve a document by urn, path, slug, ref name, or version MAC.
 
-    Access-controlled: requires --org-yaml + an authenticated OS identity;
-    content in a category the actor cannot read is denied (fail-closed).
+    Only nodes the resolved actor may read are returned. Direct local access
+    trusts the supplied actor; the protected peer fallback authenticates the
+    local account and currently provides reference metadata only.
     """
+    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+
+    if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        if cat:
+            raise click.ClickException("protected content retrieval is unavailable")
+        result = lookup_configured(
+            "reference",
+            ref,
+            actor=_resolve_actor(actor),
+            org_yaml=org_yaml,
+            root=root,
+            mac=mac,
+        )
+        click.echo(f"{result['urn']} -> {result['location']}")
+        return
     manifest = _load_or_die(root)
     if mac:
         node = node_by_mac(manifest, mac)
@@ -541,6 +557,20 @@ def get(ref, mac, cat, backend, org_yaml, actor, root):
 @click.option("--root", default=".", show_default=True, help="Local backend root.")
 def versions(ref, org_yaml, actor, root):
     """List the version history (MAC chain) of a document."""
+    from .workflow_admission_search import DEFAULT_CONFIG, lookup_configured
+
+    if not os.access(_manifest_path(root), os.R_OK) and os.path.exists(DEFAULT_CONFIG):
+        history = lookup_configured(
+            "versions", ref, actor=_resolve_actor(actor), org_yaml=org_yaml, root=root
+        )
+        if not history:
+            click.echo("no versions")
+        for index, version in enumerate(history, 1):
+            marker = " (current)" if version["current"] else ""
+            click.echo(
+                f"v{index}  {display_id(version['mac'])}{marker}  {version['size']} bytes"
+            )
+        return
     manifest = _load_or_die(root)
     node = resolve_node(manifest, ref)
     if node is None:

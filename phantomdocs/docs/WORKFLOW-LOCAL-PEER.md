@@ -110,6 +110,12 @@ declared CLI actor, organization and root must match the authenticated service
 response and protected configuration. Other deployments continue to use their
 existing local search behavior.
 
+The same peer can resolve an authorized document reference and its version
+history without giving the client a copy of the manifest. It rejects a history
+if any retained version is outside the actor's access. `pd get` without `--cat`
+and `pd versions` use this peer when the manifest is inaccessible. Protected
+content streaming (`pd get --cat`) is not implemented; it returns an error.
+
 This is not a complete filesystem security boundary on its own. If the caller
 can read the manifest directly, it can inspect its contents outside the search
 service. Administrators must protect the manifest and all alternate copies,
