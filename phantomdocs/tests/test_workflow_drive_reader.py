@@ -44,6 +44,16 @@ def test_metadata_and_bounded_media_reads_are_get_only(tmp_path):
     assert "q=" not in requests[0].full_url
 
 
+def test_refresh_discards_cached_metadata(tmp_path):
+    metadata = {"id": "file-id", "size": "8", "version": "1"}
+    value, requests = reader(tmp_path, metadata)
+    assert value.metadata("gdrive://file-id")["version"] == "1"
+    metadata["version"] = "2"
+    assert value.metadata("gdrive://file-id")["version"] == "1"
+    assert value.refresh_metadata("gdrive://file-id")["version"] == "2"
+    assert len(requests) == 2
+
+
 @pytest.mark.parametrize(
     "size,data", [("0", b""), ("2048", b"x"), ("9", b"document"), ("2", b"document")]
 )

@@ -86,6 +86,11 @@ class DriveArchiveReader:
             self.cache[ref] = value
         return dict(self.cache[ref])
 
+    def refresh_metadata(self, ref):
+        """Obtain a fresh observation rather than reusing cached metadata."""
+        self.cache.pop(ref, None)
+        return self.metadata(ref)
+
     def read_reference(self, ref, *, streaming=True):
         if streaming is not True:
             raise WorkflowError("archive reads require a bounded streaming snapshot")

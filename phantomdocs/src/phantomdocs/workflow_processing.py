@@ -6,8 +6,10 @@ archive naming, Drive mutation, indexing, credential discovery or persona change
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -18,8 +20,10 @@ from copy import deepcopy
 from pathlib import Path
 
 from .fsutil import fsync_dir
+from .storage import location_uri
 from .workflow_commands import build_command
 from .workflow_executor import execution_lock
+from .workflow_reconcile import OBSERVATION_FIELDS
 from .workflow_runner import file_hash, run_transform, validate_output, verify_binding
 from .workflows import WorkflowError, digest, validate_contract
 
@@ -319,7 +323,7 @@ class ProcessingAdapter:
             metadata = []
             for artifact in inputs:
                 specification = self.profile["inputs"][artifact["role"]]
-                value = self.reader.metadata(artifact["ref"])
+                value = self.reader.refresh_metadata(artifact["ref"])
                 if (
                     not artifact["ref"].startswith("gdrive://")
                     or value.get("id") != artifact["ref"].split("://")[1]
@@ -327,6 +331,10 @@ class ProcessingAdapter:
                     or not isinstance(value.get("parents"), list)
                     or planned["intake_ref"].split("://")[1] not in value["parents"]
                     or value.get("mimeType") != artifact["media_type"]
+                    or not isinstance(value.get("version"), str)
+                    or not re.fullmatch(r"[0-9]{1,40}", value["version"])
+                    or not isinstance(value.get("md5Checksum"), str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", value["md5Checksum"])
                     or artifact["media_type"] not in specification["media_types"]
                     or not 0
                     < int(value.get("size", 0))
@@ -340,15 +348,33 @@ class ProcessingAdapter:
             for number, artifact in enumerate(inputs):
                 spec = self.profile["inputs"][artifact["role"]]
                 path = directory / f"source-{number}.{spec['extension']}"
-                content, _ = self.reader.read_reference(artifact["ref"], streaming=True)
+                content, location = self.reader.read_reference(
+                    artifact["ref"], streaming=True
+                )
                 try:
-                    if len(content) != int(metadata[number]["size"]):
+                    if location_uri(location) != artifact["ref"] or len(content) != int(
+                        metadata[number]["size"]
+                    ):
                         raise WorkflowError("source size changed during download")
                     with path.open("xb") as destination:
                         content.copy_to(destination)
                 finally:
                     content.close()
                 os.chmod(path, 0o600)
+                # These observations detect changes during the read; Drive does
+                # not provide an atomic lock or bind this snapshot to a prior scan.
+                after = self.reader.refresh_metadata(artifact["ref"])
+                if any(
+                    metadata[number].get(field) != after.get(field)
+                    for field in OBSERVATION_FIELDS
+                ):
+                    raise WorkflowError("source metadata changed during download")
+                with path.open("rb") as source:
+                    md5 = hashlib.md5(usedforsecurity=False)  # nosec B324 - provider checksum, not security
+                    while chunk := source.read(1024 * 1024):
+                        md5.update(chunk)
+                if md5.hexdigest() != metadata[number]["md5Checksum"]:
+                    raise WorkflowError("source bytes do not match provider checksum")
                 measured = validate_input(
                     path, artifact["media_type"], spec, self.profile
                 )
