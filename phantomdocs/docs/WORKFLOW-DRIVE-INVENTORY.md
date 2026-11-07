@@ -46,3 +46,18 @@ bound local memory and parsing work.
 
 This command does not admit workflow jobs, change PhantomOrg, access PhantomBot,
 publish to PhantomView, create a service or timer, or delete inbox files.
+
+## Tree inventory for matrix review
+
+`pd workflow tree-inventory --root-ref gdrive://ROOT_ID --drive-token-file
+/private/drive-access-token` recursively lists metadata using the same per-folder
+pagination and token restrictions. It does not traverse shortcuts, includes no
+trashed objects, and fails on unexpected parents, duplicate or cyclic IDs, more
+than 500 folders, more than 5,000 items, or oversized output. The root itself is
+not included in `items`. An inaccessible or incomplete folder fails the whole
+request rather than returning a partial tree.
+
+The result is a sequence of independently observed listings, not an atomic
+snapshot or proof that an absent object was never registered. Reconcile its IDs
+and evidence against the current matrix, historical versions and operations log
+before proposing changes; a filename match alone does not establish identity.
