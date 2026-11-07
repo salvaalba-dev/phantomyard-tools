@@ -2,6 +2,8 @@
 
 import hashlib
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -96,8 +98,20 @@ def test_interrupted_publication_denies_reads_until_recovery(files):
             str(files["source"]), str(files["destination"]), str(files["lock"])
         )
     files["destination"].write_bytes(files["backup"].read_bytes())
-    publication.recover(
-        str(files["source"]), str(files["destination"]), str(files["lock"])
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "phantomdocs.workflow_policy_publish",
+            "recover",
+            "--source",
+            str(files["source"]),
+            "--destination",
+            str(files["destination"]),
+            "--policy-lock",
+            str(files["lock"]),
+        ],
+        check=True,
     )
     assert files["source"].read_bytes() == files["destination"].read_bytes()
     with policy_guard(str(files["lock"]), exclusive=False):
@@ -130,3 +144,19 @@ def test_concurrent_source_change_is_not_overwritten(files):
     with pytest.raises(ValueError, match="recovery"):  # noqa: SIM117
         with policy_guard(str(files["lock"]), exclusive=False):
             pass
+
+
+def test_publish_command_accepts_documented_options(files):
+    digest = hashlib.sha256(files["source"].read_bytes()).hexdigest()
+    command = [sys.executable, "-m", "phantomdocs.workflow_policy_publish", "publish"]
+    for option, name in (
+        ("candidate", "candidate"),
+        ("source", "source"),
+        ("destination", "destination"),
+        ("backup", "backup"),
+        ("policy-lock", "lock"),
+    ):
+        command.extend(["--" + option, str(files[name])])
+    command.extend(["--expected-sha256", digest])
+    subprocess.run(command, check=True)
+    assert files["source"].read_bytes() == files["destination"].read_bytes()

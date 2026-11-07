@@ -146,10 +146,18 @@ def main():
         "policy-lock",
         "expected-sha256",
     ):
-        change.add_argument("--" + option, required=True)
+        change.add_argument(
+            "--" + option,
+            dest="lock_path" if option == "policy-lock" else option.replace("-", "_"),
+            required=True,
+        )
     repair = sub.add_parser("recover")
     for option in ("source", "destination", "policy-lock"):
-        repair.add_argument("--" + option, required=True)
+        repair.add_argument(
+            "--" + option,
+            dest="lock_path" if option == "policy-lock" else option.replace("-", "_"),
+            required=True,
+        )
     args = vars(parser.parse_args())
     operation = args.pop("operation")
     if operation == "publish":
