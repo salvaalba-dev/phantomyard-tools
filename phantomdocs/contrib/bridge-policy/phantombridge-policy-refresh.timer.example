@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry bridge policy reconciliation
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=phantombridge-policy-refresh.service
+
+[Install]
+WantedBy=timers.target
