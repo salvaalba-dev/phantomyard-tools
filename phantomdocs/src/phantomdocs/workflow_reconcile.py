@@ -7,9 +7,9 @@ result is evidence for review, never authority to publish, index or delete.
 import hashlib
 import re
 
-from .access import can_read
-from .manifest import validate
+from .manifest import structural_issues, validate
 from .storage import location_uri
+from .workflow_visibility import can_observe_node
 from .workflows import WorkflowError, reference_is_safe
 
 OBSERVATION_FIELDS = (
@@ -51,9 +51,11 @@ def review_copy(
     for value in (observed_sha256, receipt_sha256):
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
             raise WorkflowError("invalid reconciliation digest")
-    if validate(manifest) or manifest["manifest"]["org"] != org.get(
-        "organization", {}
-    ).get("id"):
+    if (
+        validate(manifest)
+        or structural_issues(manifest)
+        or manifest["manifest"]["org"] != org.get("organization", {}).get("id")
+    ):
         raise WorkflowError("invalid or mismatched native manifest")
     result = {"status": "review-required", "execution_ready": False}
     if (inbox_ref, archive_ref) != (receipt_inbox_ref, receipt_archive_ref):
@@ -75,7 +77,7 @@ def review_copy(
             matches.append(node)
     # A generic result avoids revealing whether an inaccessible document exists.
     if not matches or any(
-        not can_read(org, caller, node["category"]) for node in matches
+        not can_observe_node(org, caller, manifest, node) for node in matches
     ):
         return {**result, "reason": "reference-unavailable-or-unauthorized"}
     if len({node["urn"] for node in matches}) != 1:

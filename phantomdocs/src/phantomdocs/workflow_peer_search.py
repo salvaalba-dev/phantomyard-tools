@@ -6,9 +6,9 @@ not itself protect the store from direct filesystem access or install a service.
 
 import json
 
-from .access import can_read
-from .manifest import validate
+from .manifest import structural_issues, validate
 from .workflow_local_identity import resolve_peer_actor
+from .workflow_visibility import can_observe_node
 
 MAX_QUERY_BYTES = 512
 MAX_SEARCH_RESPONSE_BYTES = 128 * 1024
@@ -29,12 +29,16 @@ def search_peer(connection, request, *, identity_map, org, load_manifest):
     if not any(a.get("id") == actor for a in org.get("actors", [])):
         raise ValueError("unknown actor")
     manifest = load_manifest()
-    if not isinstance(manifest, dict) or validate(manifest):
+    if (
+        not isinstance(manifest, dict)
+        or validate(manifest)
+        or structural_issues(manifest)
+    ):
         raise ValueError("invalid manifest")
     needle = query.lower()
     items = []
     for node in manifest["nodes"]:
-        if not can_read(org, actor, node["category"]):
+        if not can_observe_node(org, actor, manifest, node):
             continue
         meta = node.get("meta") or {}
         haystack = " ".join(
