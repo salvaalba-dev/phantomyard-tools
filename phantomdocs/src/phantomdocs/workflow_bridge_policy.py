@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 -- fixed commands with validated arguments
 
 from .workflow_admission_config import parse_policy
 from .workflow_policy_guard import policy_guard
