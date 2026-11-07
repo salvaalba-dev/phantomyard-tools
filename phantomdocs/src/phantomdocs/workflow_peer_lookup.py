@@ -9,6 +9,7 @@ from .manifest import (
     node_by_urn,
     ref_target_mac,
     resolve_node,
+    structural_issues,
     validate,
     versions_of,
 )
@@ -16,6 +17,7 @@ from .storage import location_uri
 from .workflow_local_identity import resolve_peer_actor
 from .workflow_peer_audit import filtered_audit
 from .workflow_peer_search import MAX_QUERY_BYTES, MAX_SEARCH_RESPONSE_BYTES
+from .workflow_visibility import can_observe_node
 
 
 def lookup_peer(
@@ -57,11 +59,17 @@ def lookup_peer(
     if not any(a.get("id") == actor for a in org.get("actors", [])):
         raise ValueError("unknown actor")
     manifest = load_manifest()
-    if not isinstance(manifest, dict) or validate(manifest):
+    if (
+        not isinstance(manifest, dict)
+        or validate(manifest)
+        or structural_issues(manifest)
+    ):
         raise ValueError("invalid manifest")
     if operation in {"status", "refs", "audit"}:
         visible = [
-            node for node in manifest["nodes"] if can_read(org, actor, node["category"])
+            node
+            for node in manifest["nodes"]
+            if can_observe_node(org, actor, manifest, node)
         ]
         if operation == "status":
             header = manifest["manifest"]
@@ -80,7 +88,7 @@ def lookup_peer(
             for name, value in manifest.get("refs", {}).items():
                 target = ref_target_mac(value)
                 node = node_by_mac(manifest, target) if target else None
-                if node and can_read(org, actor, node["category"]):
+                if node and can_observe_node(org, actor, manifest, node):
                     result.append({"name": name, "mac": target, "urn": node["urn"]})
         else:
             if load_audit is None:
@@ -105,7 +113,7 @@ def lookup_peer(
         if node is None or selected is None or node["urn"] != selected["urn"]:
             raise ValueError("document unavailable")
         node = selected
-    if node is None or not can_read(org, actor, node["category"]):
+    if node is None or not can_observe_node(org, actor, manifest, node):
         raise ValueError("document unavailable")
     if operation == "reference":
         locations = node.get("locations") or []

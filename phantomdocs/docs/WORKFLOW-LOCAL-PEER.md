@@ -103,6 +103,9 @@ an incomplete result when the cap is exceeded. The service also holds the native
 manifest lock until the reply is sent, so a cooperating classification writer
 cannot change the document category during that request. A completed response
 cannot be recalled after a later access change.
+For a historical document version, both that version and the current head must
+be readable. Search, reference lookup, status and refs reject structurally
+ambiguous manifests rather than choosing an arbitrary current version.
 
 When `pd search` cannot read the local manifest and the root-controlled default
 host configuration exists, the command attempts this protected service. The
