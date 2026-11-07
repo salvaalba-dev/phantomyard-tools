@@ -14,6 +14,7 @@ import sys
 
 from phantomdocs.workflow_admission_config import load_config
 from phantomdocs.workflow_admission_service import serve_configured_once
+from phantomdocs.workflow_policy_guard import PolicyRecoveryRequired
 from phantomdocs.workflow_protected_paths import protected_parent
 
 
@@ -47,6 +48,18 @@ def validated_systemd_socket(expected_path, *, environ=None):
         raise
 
 
+def serve_forever(listener, config_path, expected_socket):
+    """Keep the listener available while an interrupted policy is recovered."""
+    while True:
+        try:
+            serve_configured_once(
+                listener, config_path, expected_socket=expected_socket
+            )
+        except PolicyRecoveryRequired:
+            # The connection has already been closed without admitting a request.
+            continue
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
@@ -54,8 +67,7 @@ def main():
     config = load_config(args.config)
     path = config["socket_path"]
     with validated_systemd_socket(path) as listener:
-        while True:
-            serve_configured_once(listener, args.config, expected_socket=path)
+        serve_forever(listener, args.config, path)
 
 
 if __name__ == "__main__":

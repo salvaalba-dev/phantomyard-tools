@@ -10,6 +10,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+class PolicyRecoveryRequired(ValueError):
+    """A policy publication was interrupted and must be recovered."""
+
+
 @contextmanager
 def policy_guard(lock_path, *, exclusive):
     import fcntl
@@ -56,7 +60,9 @@ def policy_guard(lock_path, *, exclusive):
                     except FileNotFoundError:
                         pass
                     else:
-                        raise ValueError("policy publication requires recovery")
+                        raise PolicyRecoveryRequired(
+                            "policy publication requires recovery"
+                        )
                 yield
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
