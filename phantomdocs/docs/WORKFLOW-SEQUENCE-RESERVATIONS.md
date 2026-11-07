@@ -1,13 +1,19 @@
 # Trusted local sequence reservations
 
 `SequenceReservations` is an additive ledger primitive for the format
-`ENTITY-YYYYMMDD-NNN`. It reserves consecutive numbers per entity and day in an
+`ENTITY-PROJECT-YYYYMMDD-NNN`. It reserves consecutive numbers per entity,
+project and day in an
 existing private `WorkflowLedger`, using an immediate SQLite transaction. The
 same request ID and request digest always return the existing reservation;
 reusing that request ID for different data or scope fails. Reservations remain
 durable after failures and are never released or automatically reused.
 
-An authorized operator must explicitly initialize each entity/day with a
+Project codes must be explicitly supplied as uppercase ASCII letters and digits;
+the allocator never silently rewrites project names. Existing identifiers in
+older formats are historical records and must not be renumbered or registered
+again.
+
+An authorized operator must explicitly initialize each entity/project/day with a
 verified baseline and SHA-256 evidence digest. The digest records the evidence
 used; it does not prove that the evidence is complete. An absent scope refuses
 all reservations. Initialization cannot be changed after it is recorded. A
