@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from phantomdocs import workflow_admission_activation as activation_admission
+from phantomdocs.workflow_policy_guard import PolicyRecoveryRequired
 
 
 class Listener:
@@ -88,3 +89,19 @@ def test_closes_wrong_listener(activation, attribute, value):
             "/run/example/admission.sock", environ=env
         )
     assert listener.closed
+
+
+def test_listener_survives_pending_recovery_but_does_not_mask_other_errors(monkeypatch):
+    calls = []
+
+    def serve(listener, config, *, expected_socket):
+        calls.append((listener, config, expected_socket))
+        if len(calls) == 1:
+            raise PolicyRecoveryRequired("synthetic pending update")
+        raise RuntimeError("synthetic unrelated failure")
+
+    monkeypatch.setattr(activation_admission, "serve_configured_once", serve)
+    listener = object()
+    with pytest.raises(RuntimeError, match="unrelated"):
+        activation_admission.serve_forever(listener, "/etc/config", "/run/socket")
+    assert calls == [(listener, "/etc/config", "/run/socket")] * 2
