@@ -189,3 +189,14 @@ def test_linux_real_lock_sync_and_resolver(monkeypatch):
         assert result == "restarted"
         assert source.read_bytes() == dest.read_bytes()
         assert actions == ["is-active", "stop", "start"]
+
+
+def test_rejects_invalid_service_operations():
+    for action, unit in [("reload", "bridge.service"), ("stop", "--all.service")]:
+        with pytest.raises(module.BridgeRefreshError, match="invalid service"):
+            module._systemctl(action, unit)
+
+
+def test_rejects_arbitrary_node_executable():
+    with pytest.raises(module.BridgeRefreshError, match="resolver configuration"):
+        module._derive_both(b"", b"", node="/tmp/node", resolver="/tmp/resolver")

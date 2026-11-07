@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 
 from .workflow_admission_config import parse_policy
@@ -47,12 +48,14 @@ process.stdout.write(JSON.stringify(input.map(derive)));
 
 
 def _derive_both(source, destination, *, node, resolver):
+    if node != "/usr/bin/node" or not os.path.isabs(resolver):
+        raise BridgeRefreshError("invalid bridge resolver configuration")
     with protected_parent(resolver) as (directory, name):
         fd = open_protected_file(directory, name)
         os.close(fd)
     try:
         payload = json.dumps([source.decode("utf-8"), destination.decode("utf-8")])
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 -- fixed executable, protected resolver, no shell
             [node, "-e", _DERIVE, resolver],
             input=payload,
             text=True,
@@ -69,8 +72,12 @@ def _derive_both(source, destination, *, node, resolver):
 
 
 def _systemctl(action, unit):
+    if action not in {"is-active", "start", "stop"} or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service", unit
+    ):
+        raise BridgeRefreshError("invalid service operation")
     if action == "is-active":
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 -- fixed executable and validated unit
             ["/usr/bin/systemctl", "show", unit, "--property=ActiveState", "--value"],
             capture_output=True,
             text=True,
@@ -83,7 +90,7 @@ def _systemctl(action, unit):
         if result.returncode == 0 and state in ("inactive", "failed"):
             return False
         raise BridgeRefreshError("bridge service state is uncertain")
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 -- fixed executable and validated arguments
         ["/usr/bin/systemctl", action, unit],
         capture_output=True,
         timeout=45,
