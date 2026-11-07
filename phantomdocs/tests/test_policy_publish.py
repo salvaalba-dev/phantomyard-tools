@@ -86,6 +86,16 @@ def test_interrupted_publication_denies_reads_until_recovery(files):
     with pytest.raises(ValueError, match="recovery"):  # noqa: SIM117
         with policy_guard(str(files["lock"]), exclusive=False):
             pass
+    wrong = files["source"].with_name("wrong")
+    wrong.write_bytes(files["source"].read_bytes())
+    with pytest.raises(ValueError, match="marker"):
+        publication.recover(str(wrong), str(files["destination"]), str(files["lock"]))
+    files["destination"].write_text("version: 1\nthird: true\n")
+    with pytest.raises(ValueError, match="investigation"):
+        publication.recover(
+            str(files["source"]), str(files["destination"]), str(files["lock"])
+        )
+    files["destination"].write_bytes(files["backup"].read_bytes())
     publication.recover(
         str(files["source"]), str(files["destination"]), str(files["lock"])
     )

@@ -6,11 +6,12 @@ edit the live source directly while a protected peer is running.
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import stat
 
-from .workflow_admission_config import _read_protected, parse_policy
+from .workflow_admission_config import _json, _read_protected, parse_policy
 from .workflow_policy_guard import policy_guard
 from .workflow_policy_sync import _synchronize_locked
 from .workflow_protected_paths import protected_parent
@@ -59,6 +60,15 @@ def publish(candidate, source, destination, backup, lock_path, expected_sha256):
         parse_policy(new)
         with protected_parent(lock_path) as (directory, lock_name):
             marker = lock_name + ".pending"
+            record = json.dumps(
+                {
+                    "source": source,
+                    "destination": destination,
+                    "old_sha256": hashlib.sha256(old).hexdigest(),
+                    "new_sha256": hashlib.sha256(new).hexdigest(),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
             fd = os.open(
                 marker,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -66,6 +76,12 @@ def publish(candidate, source, destination, backup, lock_path, expected_sha256):
                 dir_fd=directory,
             )
             try:
+                remaining = memoryview(record)
+                while remaining:
+                    written = os.write(fd, remaining)
+                    if written <= 0:
+                        raise OSError("short publication marker write")
+                    remaining = remaining[written:]
                 os.fsync(fd)
             finally:
                 os.close(fd)
@@ -86,7 +102,34 @@ def recover(source, destination, lock_path):
         with protected_parent(lock_path) as (directory, lock_name):
             marker = lock_name + ".pending"
             _marker(directory, marker)
-            _synchronize_locked(source, destination)
+            record = _json(lock_path + ".pending")
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"source", "destination", "old_sha256", "new_sha256"}
+                or record["source"] != source
+                or record["destination"] != destination
+                or not all(
+                    isinstance(record[key], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", record[key])
+                    for key in ("old_sha256", "new_sha256")
+                )
+            ):
+                raise ValueError("publication marker does not match recovery")
+            current_source = _read_protected(source)
+            current_destination = _read_protected(destination)
+            state = (
+                hashlib.sha256(current_source).hexdigest(),
+                hashlib.sha256(current_destination).hexdigest(),
+            )
+            old, new = record["old_sha256"], record["new_sha256"]
+            if state not in {(old, old), (new, old), (new, new)}:
+                raise ValueError("policy state requires manual investigation")
+            _synchronize_locked(
+                source,
+                destination,
+                expected_source=current_source,
+                expected_destination=current_destination,
+            )
             os.unlink(marker, dir_fd=directory)
             os.fsync(directory)
 

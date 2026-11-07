@@ -53,8 +53,11 @@ Before changing either policy the publisher creates a durable `.pending` marker
 beside the lock. Updated shared-lock readers refuse access while it exists. If
 publication is interrupted, use the `recover` subcommand with source,
 destination and lock to synchronize the authoritative source, then clear the
-marker; inspect the preserved backup before any subsequent correction. Recovery
-does not restore an old policy automatically. A changed or unreadable policy
+marker; recovery checks the recorded paths and known old/new policy digests.
+A malformed or incomplete marker, wrong paths, or any unexpected policy state
+requires manual investigation while access remains closed. Inspect the
+preserved backup before any subsequent correction. Recovery does not restore an
+old policy automatically. A changed or unreadable policy
 fails closed. Direct edits of the live source, old synchronizers, and privileged
 writers that bypass this procedure remain uncoordinated.
 
