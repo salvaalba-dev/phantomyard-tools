@@ -13,10 +13,11 @@ from pathlib import Path
 
 import click
 
-from .access import can_read, normalize_category
-from .manifest import node_by_path, node_by_slug, validate
+from .access import normalize_category
+from .manifest import node_by_path, node_by_slug, structural_issues, validate
 from .storage import location_uri
 from .workflow_source_fingerprint import reference_scan_id
+from .workflow_visibility import can_observe_node
 from .workflows import WorkflowError, digest, plan, reference_is_safe
 
 MAX_ITEMS = 1000
@@ -137,7 +138,7 @@ def scan(
 ):
     """Propose reference-document jobs without admission, byte reads or writes."""
     _inventory(inventory)
-    if validate(manifest):
+    if validate(manifest) or structural_issues(manifest):
         raise WorkflowError("invalid native manifest structure")
     if manifest["manifest"]["org"] != org.get("organization", {}).get("id"):
         raise WorkflowError("manifest and organization differ")
@@ -207,7 +208,7 @@ def scan(
                 normalize_category(n["category"]) != category
                 or set(n.get("owners") or []) != set(owners)
                 or n["parentMac"] != parent["mac"]
-                or not can_read(org, caller, n["category"])
+                or not can_observe_node(org, caller, manifest, n)
                 for n in matches
             ):
                 row["reason"] = "existing-reference-policy-or-identity-conflict"
@@ -227,6 +228,7 @@ def scan(
             )
             if (
                 linked is None
+                or not can_observe_node(org, caller, manifest, linked)
                 or entry["inbox_name"] != installation["intake"]["inbox"]
                 or normalize_category(linked["category"]) != category
                 or set(linked.get("owners") or []) != set(owners)
