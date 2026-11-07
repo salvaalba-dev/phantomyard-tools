@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch PhantomOrg policy for bridge changes
+
+[Path]
+PathChanged=/root/proyeccion/org-live.yaml
+Unit=phantombridge-policy-refresh.service
+
+[Install]
+WantedBy=multi-user.target

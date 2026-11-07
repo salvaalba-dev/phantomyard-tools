@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh the Nostr bridge policy from PhantomOrg
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/phantomdocs/bridge-policy/venv/bin/python -m phantomdocs.workflow_bridge_policy --source /root/proyeccion/org-live.yaml --destination /opt/jitsi-nostr-bridge/org.yaml --policy-lock /etc/phantomdocs/policy.lock --resolver /opt/jitsi-nostr-bridge/org-routing.js --unit jitsi-nostr-bridge.service
