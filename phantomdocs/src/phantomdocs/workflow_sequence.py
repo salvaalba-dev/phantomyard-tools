@@ -22,7 +22,7 @@ def _scope(entity, project, day):
     if not isinstance(day, str) or not re.fullmatch(r"[0-9]{8}", day):
         raise WorkflowError("invalid sequence date")
     try:
-        datetime.datetime.strptime(day, "%Y%m%d")
+        datetime.date(int(day[:4]), int(day[4:6]), int(day[6:8]))
     except ValueError as error:
         raise WorkflowError("invalid sequence date") from error
 
