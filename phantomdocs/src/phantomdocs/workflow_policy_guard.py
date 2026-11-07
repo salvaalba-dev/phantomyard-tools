@@ -46,6 +46,17 @@ def policy_guard(lock_path, *, exclusive):
                 raise ValueError("policy lock is not protected")
             fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
+                if not exclusive:
+                    try:
+                        os.stat(
+                            path.name + ".pending",
+                            dir_fd=directory,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise ValueError("policy publication requires recovery")
                 yield
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
