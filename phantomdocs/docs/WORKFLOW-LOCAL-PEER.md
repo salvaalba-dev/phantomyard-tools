@@ -36,6 +36,35 @@ modules do not install a daemon or timer, poll an inbox, move Drive files, or
 make an existing integration use the lock. Those require separate integration,
 tests and deployment.
 
+## Publishing manual policy changes
+
+`python -m phantomdocs.workflow_policy_publish publish` supports a reviewed,
+root-owned candidate while holding the exclusive policy lock across both the
+authoritative source replacement and the installed copy. The administrator
+must first create an independent, protected backup of the source, prepare a
+separate candidate, and record the source SHA-256 before editing. Supply the
+candidate, source, destination, backup, lock path, and recorded digest through
+the corresponding command options. All four files and their parent paths must
+be protected. Publication refuses a stale source, a differing installed copy,
+an invalid candidate, or a backup that is not an independent copy of the old
+source. It preserves the files' permissions and extended attributes.
+
+Before changing either policy the publisher creates a durable `.pending` marker
+beside the lock. Updated shared-lock readers refuse access while it exists. If
+publication is interrupted, use the `recover` subcommand with source,
+destination and lock to synchronize the authoritative source, then clear the
+marker; inspect the preserved backup before any subsequent correction. Recovery
+does not restore an old policy automatically. A changed or unreadable policy
+fails closed. Direct edits of the live source, old synchronizers, and privileged
+writers that bypass this procedure remain uncoordinated.
+
+This is not a deployment boundary by itself. **All protected readers must run
+the marker-aware code before this publication mechanism is used.** Older readers
+ignore the marker and can serve a stale policy after an interrupted update. The
+procedure does not coordinate PhantomView's separate collector or revoke direct
+Drive access. Never activate a peer until the complete deployment and every
+writer, reader, recovery path and authority projection have been reviewed.
+
 ## Supervised admission host
 
 `python -m phantomdocs.workflow_admission_activation --config CONFIG` provides
