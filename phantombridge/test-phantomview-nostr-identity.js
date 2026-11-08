@@ -1,0 +1,35 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const {generateSecretKey, getPublicKey, getEventHash, finalizeEvent, nip19} = require('nostr-tools');
+const nip17 = require('nostr-tools/nip17');
+const nip44 = require('nostr-tools/nip44');
+const {verifiedDirectSender, resolveHumanAgent} = require('./phantomview-nostr-identity');
+
+const humanKey = generateSecretKey();
+const receiverKey = generateSecretKey();
+const otherKey = generateSecretKey();
+const now = Math.floor(Date.now() / 1000);
+const humanNpub = nip19.npubEncode(getPublicKey(humanKey));
+const org = {humans: [{id: 'human-a', npub: humanNpub, counterpart_persona: 'agent-a'}], actors: [{id: 'agent-a'}]};
+const wrap = nip17.wrapEvent(humanKey, {publicKey: getPublicKey(receiverKey)}, 'request', undefined, undefined, now);
+const proof = verifiedDirectSender(wrap, receiverKey, now);
+assert.equal(proof.sender, humanNpub);
+assert.deepEqual(resolveHumanAgent(org, proof.sender), {human: 'human-a', agent: 'agent-a'});
+assert.throws(() => verifiedDirectSender(wrap, otherKey, now));
+assert.throws(() => verifiedDirectSender(wrap, receiverKey, now + 301), /expired/);
+const forged = JSON.parse(JSON.stringify(wrap));
+forged.sig = '0'.repeat(128);
+assert.throws(() => verifiedDirectSender(forged, receiverKey, now), /Invalid gift wrap/);
+const impersonated = {kind: 14, pubkey: getPublicKey(humanKey), created_at: now, tags: [['p', getPublicKey(receiverKey)]], content: 'request'};
+impersonated.id = getEventHash(impersonated);
+const seal = finalizeEvent({kind: 13, created_at: now, tags: [], content: nip44.encrypt(JSON.stringify(impersonated), nip44.getConversationKey(otherKey, getPublicKey(receiverKey)))}, otherKey);
+const wrapKey = generateSecretKey();
+const spoof = finalizeEvent({kind: 1059, created_at: now, tags: [['p', getPublicKey(receiverKey)]], content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, getPublicKey(receiverKey)))}, wrapKey);
+assert.throws(() => verifiedDirectSender(spoof, receiverKey, now), /Invalid message sender/);
+assert.throws(() => resolveHumanAgent({humans: [], actors: org.actors}, proof.sender));
+assert.throws(() => resolveHumanAgent({humans: [{id: 'x', npub: humanNpub}], actors: org.actors}, proof.sender));
+assert.throws(() => resolveHumanAgent({humans: [...org.humans, {...org.humans[0], id: 'human-b'}], actors: org.actors}, proof.sender));
+assert.throws(() => resolveHumanAgent({humans: org.humans, actors: []}, proof.sender));
+assert.throws(() => resolveHumanAgent({humans: org.humans, actors: [...org.actors, ...org.actors]}, proof.sender));
+console.log('Synthetic Nostr identity checks passed');
