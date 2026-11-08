@@ -1,13 +1,16 @@
 """Local agent client for the existing PhantomView private handoff protocol.
 
 The operator supplies the socket, reader account, scope and tool-owned signing
-key from protected configuration. This module does not load secrets, send a
-chat message, create a listener, or authenticate a remote human.
+key from protected configuration. It does not send a chat message, create a
+listener, or authenticate a remote human.
 """
 
+import argparse
 import json
+import os
 import re
 import socket
+import stat
 import struct
 import time
 from pathlib import Path
@@ -99,3 +102,86 @@ def request_agent_link(*, secret, origin, scope_id, socket_path, reader_uid):
     ):
         raise ValueError("Viewer did not issue a valid link")
     return result["link"]
+
+
+def _read_fixed_file(path, *, owner, mode_mask, limit):
+    if (
+        not isinstance(path, str)
+        or not Path(path).is_absolute()
+        or ".." in Path(path).parts
+    ):
+        raise ValueError("Fixed local file required")
+    target = Path(path)
+    if target.is_symlink() or any(parent.is_symlink() for parent in target.parents):
+        raise ValueError("Linked local files are not allowed")
+    for parent in target.parents:
+        info = parent.stat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid not in {0, owner}
+            or info.st_mode & 0o022
+        ):
+            raise ValueError("Unsafe local parent directory")
+    fd = os.open(
+        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    )
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner
+            or info.st_nlink != 1
+            or info.st_mode & mode_mask
+        ):
+            raise ValueError("Unsafe local file ownership or permissions")
+        raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("Local file exceeds bounds")
+        return raw
+
+
+def main():
+    """Run under the agent account using a root-owned route configuration."""
+    parser = argparse.ArgumentParser(description="Request a scoped PhantomView link")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--scope", required=True)
+    args = parser.parse_args()
+    try:
+        if os.name != "posix" or os.getuid() <= 0:
+            raise ValueError("An agent account is required")
+        raw = _read_fixed_file(args.config, owner=0, mode_mask=0o022, limit=4096)
+        config = json.loads(raw, object_pairs_hook=_unique)
+        if (
+            not isinstance(config, dict)
+            or set(config)
+            != {
+                "schema_version",
+                "agent_uid",
+                "reader_uid",
+                "origin",
+                "socket_path",
+                "key_path",
+            }
+            or type(config["schema_version"]) is not int
+            or config["schema_version"] != 1
+            or type(config["agent_uid"]) is not int
+            or config["agent_uid"] != os.getuid()
+        ):
+            raise ValueError("Invalid protected agent route")
+        key = _read_fixed_file(
+            config["key_path"], owner=config["agent_uid"], mode_mask=0o077, limit=32
+        )
+        link = request_agent_link(
+            secret=key,
+            origin=config["origin"],
+            scope_id=args.scope,
+            socket_path=config["socket_path"],
+            reader_uid=config["reader_uid"],
+        )
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        raise SystemExit("PhantomView link unavailable") from None
+    print(link)
+
+
+if __name__ == "__main__":
+    main()
