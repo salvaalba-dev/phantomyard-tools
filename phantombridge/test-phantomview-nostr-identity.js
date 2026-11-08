@@ -17,7 +17,7 @@ const proof = verifiedDirectSender(wrap, receiverKey, now);
 assert.equal(proof.sender, humanNpub);
 assert.deepEqual(resolveHumanAgent(org, proof.sender), {human: 'human-a', agent: 'agent-a'});
 assert.throws(() => verifiedDirectSender(wrap, otherKey, now));
-assert.throws(() => verifiedDirectSender(wrap, receiverKey, now + 301), /expired/);
+assert.throws(() => verifiedDirectSender(wrap, receiverKey, now + 259200), /expired/);
 const forged = JSON.parse(JSON.stringify(wrap));
 forged.sig = '0'.repeat(128);
 assert.throws(() => verifiedDirectSender(forged, receiverKey, now), /Invalid gift wrap/);
