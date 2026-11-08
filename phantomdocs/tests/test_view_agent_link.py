@@ -1,6 +1,7 @@
 import json
 import os
 import struct
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -91,6 +92,42 @@ def test_unknown_reader_receives_no_request(monkeypatch):
             reader_uid=200,
         )
     assert not fake.sent
+
+
+@pytest.mark.parametrize(
+    "explicit, expected", [([], "agent-all"), (["--scope", "river"], "river")]
+)
+def test_cli_defaults_to_agent_scope_and_allows_explicit_selection(
+    monkeypatch, capsys, explicit, expected
+):
+    config = {
+        "schema_version": 1,
+        "agent_uid": 100,
+        "reader_uid": 200,
+        "origin": "https://view.example",
+        "socket_path": "/socket",
+        "key_path": "/key",
+    }
+    monkeypatch.setattr(client, "os", SimpleNamespace(name="posix", getuid=lambda: 100))
+    monkeypatch.setattr(
+        client,
+        "_read_fixed_file",
+        lambda path, **_kwargs: (
+            json.dumps(config).encode() if path == "/config" else b"key"
+        ),
+    )
+    seen = {}
+    monkeypatch.setattr(
+        client,
+        "request_agent_link",
+        lambda **kwargs: seen.update(kwargs) or "https://view.example/#c=synthetic",
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["phantomview-link", "--config", "/config", *explicit]
+    )
+    client.main()
+    assert seen["scope_id"] == expected
+    assert capsys.readouterr().out.startswith("https://view.example/#c=")
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file ownership required")

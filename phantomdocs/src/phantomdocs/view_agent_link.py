@@ -15,6 +15,7 @@ import struct
 import time
 from pathlib import Path
 
+from phantomdocs.view_agent_directory import ACTOR_SCOPE
 from phantomdocs.view_agent_signing import sign_viewer_request
 
 
@@ -144,7 +145,7 @@ def main():
     """Run under the agent account using a root-owned route configuration."""
     parser = argparse.ArgumentParser(description="Request a scoped PhantomView link")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--scope", required=True)
+    parser.add_argument("--scope", default=ACTOR_SCOPE)
     args = parser.parse_args()
     try:
         if os.name != "posix" or os.getuid() <= 0:
