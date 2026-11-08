@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,6 +41,23 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         status, body, _ = case.request("GET", "/api/state", cookie=cookie)
         assert status == 200
         assert case.hidden not in {row["id"] for row in body["resources"]}
+        native = importlib.import_module("persona_conversation")
+        monkeypatch.setattr(native.PersonaAssistant, "available", lambda *_: True)
+        app = candidate.PublishedReader(
+            **(case.options | {"conversation_socket": "/run/example/native.sock"})
+        )
+        try:
+            assistant = app.consultations.assistant
+            monkeypatch.setattr(
+                app.gate, "identified_scope", lambda _headers: (SimpleNamespace(human=None), None)
+            )
+            assert assistant.available({}) is False
+            monkeypatch.setattr(
+                app.gate, "identified_scope", lambda _headers: (SimpleNamespace(human="h"), None)
+            )
+            assert assistant.available({}) is True
+        finally:
+            app.consultations.close()
         case.org["policies"]["phantomview"]["persona_scope_grants"][
             "administrator"
         ] = []
