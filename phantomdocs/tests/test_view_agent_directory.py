@@ -22,15 +22,20 @@ class HumanDirectory:
 @pytest.fixture
 def org():
     return {
-        "version": 1, "organization": {"id": "example"},
+        "version": 1,
+        "organization": {"id": "example"},
         "actors": [{"id": "agent", "role": "lead", "actor_exceptions": []}],
         "roles": [{"id": "lead", "access_level": "basic", "security_exceptions": []}],
         "policies": {
             "access_levels": {"basic": {"categories": ["category-4"]}},
-            "security_categories": {"category-4": {"scope": "project", "owner": "river"}},
-            "phantomview": {"scope_definitions": {"river": {"kind": "project"}},
-                            "persona_scope_grants": {"agent": ["river"]},
-                            "project_grants": {"agent": ["river"]}},
+            "security_categories": {
+                "category-4": {"scope": "project", "owner": "river"}
+            },
+            "phantomview": {
+                "scope_definitions": {"river": {"kind": "project"}},
+                "persona_scope_grants": {"agent": ["river"]},
+                "project_grants": {"agent": ["river"]},
+            },
         },
     }
 
@@ -38,8 +43,13 @@ def org():
 def test_actor_scope_and_human_route_are_separate(org):
     directory = AgentDirectory(org, HumanDirectory(), frozenset({"agent"}))
     recipient = directory.resolve_agent("agent", "river")
-    resource = {"organization": "example", "scope": {"kind": "project", "id": "river"},
-                "project": "river", "category": "category-4", "secret": False}
+    resource = {
+        "organization": "example",
+        "scope": {"kind": "project", "id": "river"},
+        "project": "river",
+        "category": "category-4",
+        "secret": False,
+    }
     assert recipient.human is None
     assert directory.permits(recipient, resource)
     assert not directory.allows_action(recipient, "resource.edit", "river")
@@ -58,7 +68,9 @@ def test_scope_and_policy_revocations_invalidate_sessions(org):
     with pytest.raises(ValueError):
         revoked.resolve_agent("agent", "river")
     with pytest.raises(ValueError):
-        AgentDirectory(org, HumanDirectory(), frozenset()).resolve_agent("agent", "river")
+        AgentDirectory(org, HumanDirectory(), frozenset()).resolve_agent(
+            "agent", "river"
+        )
 
 
 def test_multiple_agents_use_same_rules_with_disjoint_scopes(org):

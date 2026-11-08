@@ -17,8 +17,12 @@ class AgentGateMixin:
         directory = self.directory_loader()
         actor = channel_context.get("persona")
         if isinstance(directory, AgentDirectory) and actor in directory.enabled_actors:
-            return self.issue_scoped_agent(authorization, origin, actor=actor,
-                                           scope_id=channel_context.get("scope_id"))
+            return self.issue_scoped_agent(
+                authorization,
+                origin,
+                actor=actor,
+                scope_id=channel_context.get("scope_id"),
+            )
         return super().issue_identified(authorization, origin, **channel_context)
 
     def issue_scoped_agent(self, authorization, origin, *, actor, scope_id):
@@ -33,7 +37,9 @@ class AgentGateMixin:
             if len(self.recipient_links) >= 1000:
                 raise ValueError("Too many pending recipient links")
             link = links.issue(authorization, origin, self.origin)
-            match = re.fullmatch(re.escape(self.origin) + r"/#c=([A-Za-z0-9_-]{43})", link)
+            match = re.fullmatch(
+                re.escape(self.origin) + r"/#c=([A-Za-z0-9_-]{43})", link
+            )
             if not match:
                 raise ValueError("Invalid signed access link response")
             digest = self.digest(match[1])

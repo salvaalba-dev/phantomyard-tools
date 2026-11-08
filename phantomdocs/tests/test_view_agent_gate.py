@@ -51,11 +51,20 @@ class Gate(AgentGateMixin, HumanGate):
 def test_verified_link_is_bound_to_agent_scope_and_expires(org):
     directory = AgentDirectory(org, HumanDirectory(), frozenset({"agent"}))
     gate = Gate(directory)
-    link = gate.issue_scoped_agent("verified", gate.origin, actor="agent", scope_id="river")
+    link = gate.issue_scoped_agent(
+        "verified", gate.origin, actor="agent", scope_id="river"
+    )
     recipient, expiry = gate.recipient_links[gate.digest(link.split("#c=")[1])]
-    assert (recipient.persona, recipient.scope_id, recipient.human, expiry) == ("agent", "river", None, 400)
+    assert (recipient.persona, recipient.scope_id, recipient.human, expiry) == (
+        "agent",
+        "river",
+        None,
+        400,
+    )
     with pytest.raises(ValueError):
-        gate.issue_scoped_agent("verified", gate.origin, actor="agent", scope_id="river")
+        gate.issue_scoped_agent(
+            "verified", gate.origin, actor="agent", scope_id="river"
+        )
 
 
 def test_invalid_signature_and_other_scope_create_no_binding(org):
@@ -69,10 +78,20 @@ def test_invalid_signature_and_other_scope_create_no_binding(org):
 
 def test_agent_route_uses_scope_and_other_routes_stay_unchanged(org):
     gate = Gate(AgentDirectory(org, HumanDirectory(), frozenset({"agent"})))
-    result = gate.issue_identified("verified", gate.origin, persona="other", scope_id="river")
-    assert result == ("verified", gate.origin, {"persona": "other", "scope_id": "river"})
-    link = gate.issue_identified("verified", gate.origin, persona="agent", scope_id="river",
-                                 sender="untrusted-display-value")
+    result = gate.issue_identified(
+        "verified", gate.origin, persona="other", scope_id="river"
+    )
+    assert result == (
+        "verified",
+        gate.origin,
+        {"persona": "other", "scope_id": "river"},
+    )
+    link = gate.issue_identified(
+        "verified",
+        gate.origin,
+        persona="agent",
+        scope_id="river",
+        sender="untrusted-display-value",
+    )
     recipient = gate.recipient_links[gate.digest(link.split("#c=")[1])][0]
     assert recipient.persona == "agent" and recipient.human is None
-
