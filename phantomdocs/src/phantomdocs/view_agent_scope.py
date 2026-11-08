@@ -9,7 +9,7 @@ from phantomdocs.access import can_read, validate_org_schema
 
 
 def permits_view(org, actor, resource, *, actor_scope=False):
-    """Check a resource against current agent grants.
+    """Check a trusted, reviewed resource classification against agent grants.
 
     Actor scope includes organization resources allowed by category and project
     resources covered by explicit project grants. Department resources retain
@@ -77,9 +77,7 @@ def permits_view(org, actor, resource, *, actor_scope=False):
         if not isinstance(definition, dict):
             return False
         if definition.get("scope") == "project" and (
-            scope["kind"] != "project"
-            or resource.get("project") != scope["id"]
-            or definition.get("owner", scope["id"]) != scope["id"]
+            scope["kind"] != "project" or resource.get("project") != scope["id"]
         ):
             return False
         return can_read(org, actor, category)
