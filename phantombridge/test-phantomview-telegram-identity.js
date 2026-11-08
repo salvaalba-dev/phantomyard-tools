@@ -1,0 +1,22 @@
+'use strict';
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const {verifyTelegramLogin} = require('./phantomview-telegram-identity');
+const {resolveHumanAgent} = require('./phantomview-nostr-identity');
+
+const token = 'synthetic-token';
+const now = 1700000000;
+const fields = {id: '123456', first_name: 'Test', auth_date: String(now)};
+const check = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join('\n');
+const secret = crypto.createHash('sha256').update(token).digest();
+fields.hash = crypto.createHmac('sha256', secret).update(check).digest('hex');
+assert.deepEqual(verifyTelegramLogin(fields, token, now), {telegramUserId: '123456', authDate: now});
+const org = {humans: [{id: 'human', telegram_user_id: 123456, counterpart_persona: 'agent'}], actors: [{id: 'agent'}]};
+assert.deepEqual(resolveHumanAgent(org, verifyTelegramLogin(fields, token, now).telegramUserId, 'telegram'), {human: 'human', agent: 'agent'});
+assert.throws(() => resolveHumanAgent({...org, humans: []}, '123456', 'telegram'));
+assert.throws(() => verifyTelegramLogin({...fields, id: '123457'}, token, now), /signature/);
+assert.throws(() => verifyTelegramLogin(fields, 'wrong-token', now), /signature/);
+assert.throws(() => verifyTelegramLogin(fields, token, now + 301), /expired/);
+assert.throws(() => verifyTelegramLogin({...fields, extra: 'x'}, token, now), /fields/);
+assert.throws(() => verifyTelegramLogin({...fields, first_name: 'x\nid=1'}, token, now), /fields/);
+console.log('Synthetic Telegram identity checks passed');
