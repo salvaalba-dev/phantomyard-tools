@@ -15,6 +15,7 @@ GATE_ANCHOR = (
     "        gate_type = MultiIssuerGate if len(self.routes) > 1 else RecipientGate\n"
 )
 LOADER_ANCHOR = "origin, port, directory_loader=authority, audit=audit,\n"
+ASSISTANT_ANCHOR = "            from persona_conversation import NativePersonaClient, PersonaAssistant\n"
 
 
 def patch_reader(source):
@@ -27,7 +28,9 @@ def patch_reader(source):
     text = source.decode("utf-8")
     newline = "\r\n" if "\r\n" in text else "\n"
     text = text.replace("\r\n", "\n")
-    for anchor in (IMPORT_ANCHOR, CLASS_ANCHOR, GATE_ANCHOR, LOADER_ANCHOR):
+    for anchor in (
+        IMPORT_ANCHOR, CLASS_ANCHOR, GATE_ANCHOR, LOADER_ANCHOR, ASSISTANT_ANCHOR
+    ):
         if text.count(anchor) != 1:
             raise ValueError("Reader composition changed")
     text = text.replace(
@@ -58,6 +61,16 @@ def patch_reader(source):
         LOADER_ANCHOR,
         "origin, port, directory_loader=agent_directory_loader(\n"
         "                                      authority, frozenset(route['actor'] for route in self.routes)), audit=audit,\n",
+        1,
+    )
+    text = text.replace(
+        ASSISTANT_ANCHOR,
+        "            from persona_conversation import NativePersonaClient, PersonaAssistant\n"
+        "            class HumanOnlyPersonaAssistant(PersonaAssistant):\n"
+        "                def available(self, headers):\n"
+        "                    recipient, _ = self.gate.identified_scope(headers)\n"
+        "                    return recipient.human is not None and super().available(headers)\n"
+        "            PersonaAssistant = HumanOnlyPersonaAssistant\n",
         1,
     )
     ast.parse(text)

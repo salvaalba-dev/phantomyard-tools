@@ -16,6 +16,8 @@ def test_candidate_preserves_source_and_patches_exact_composition(monkeypatch):
         b"class RecipientGate: pass\n\nclass MultiIssuerGate: pass\n\n"
         b"class PublishedReader:\n"
         b"    def build(self, authority, origin, port, audit):\n"
+        b"        if True:\n"
+        b"            from persona_conversation import NativePersonaClient, PersonaAssistant\n"
         b"        gate_type = MultiIssuerGate if len(self.routes) > 1 else RecipientGate\n"
         b"        return gate_type(origin, port, directory_loader=authority, audit=audit,\n"
         b"                         extra=True)\n"
@@ -26,6 +28,7 @@ def test_candidate_preserves_source_and_patches_exact_composition(monkeypatch):
         "AgentMultiIssuerGate if len(self.routes) > 1 else AgentRecipientGate" in result
     )
     assert "ReaderAgentDirectory(org, HumanDirectory(org), actors)" in result
+    assert "recipient.human is not None and super().available(headers)" in result
     assert "extra=True" in result
 
 
