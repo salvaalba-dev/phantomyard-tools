@@ -49,11 +49,15 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         try:
             assistant = app.consultations.assistant
             monkeypatch.setattr(
-                app.gate, "identified_scope", lambda _headers: (SimpleNamespace(human=None), None)
+                app.gate,
+                "identified_scope",
+                lambda _headers: (SimpleNamespace(human=None), None),
             )
             assert assistant.available({}) is False
             monkeypatch.setattr(
-                app.gate, "identified_scope", lambda _headers: (SimpleNamespace(human="h"), None)
+                app.gate,
+                "identified_scope",
+                lambda _headers: (SimpleNamespace(human="h"), None),
             )
             assert assistant.available({}) is True
         finally:

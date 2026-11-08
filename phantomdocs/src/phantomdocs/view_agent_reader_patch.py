@@ -29,7 +29,11 @@ def patch_reader(source):
     newline = "\r\n" if "\r\n" in text else "\n"
     text = text.replace("\r\n", "\n")
     for anchor in (
-        IMPORT_ANCHOR, CLASS_ANCHOR, GATE_ANCHOR, LOADER_ANCHOR, ASSISTANT_ANCHOR
+        IMPORT_ANCHOR,
+        CLASS_ANCHOR,
+        GATE_ANCHOR,
+        LOADER_ANCHOR,
+        ASSISTANT_ANCHOR,
     ):
         if text.count(anchor) != 1:
             raise ValueError("Reader composition changed")
