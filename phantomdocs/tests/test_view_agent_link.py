@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 from types import SimpleNamespace
 
@@ -90,3 +91,14 @@ def test_unknown_reader_receives_no_request(monkeypatch):
             reader_uid=200,
         )
     assert not fake.sent
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file ownership required")
+def test_untrusted_parent_cannot_hold_protected_configuration(tmp_path):
+    target = tmp_path / "route.json"
+    target.write_text("{}")
+    tmp_path.chmod(0o777)
+    with pytest.raises(ValueError, match="parent directory"):
+        client._read_fixed_file(
+            str(target), owner=os.getuid(), mode_mask=0o022, limit=4096
+        )
