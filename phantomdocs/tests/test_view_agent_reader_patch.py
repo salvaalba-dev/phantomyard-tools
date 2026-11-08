@@ -15,6 +15,9 @@ def test_candidate_preserves_source_and_patches_exact_composition(monkeypatch):
         b"from trusted_handoff import DaemonPeerPolicy\n\n"
         b"class RecipientGate: pass\n\nclass MultiIssuerGate: pass\n\n"
         b"class PublishedReader:\n"
+        b"    def __init__(self,\n"
+        b"                 additional_issuers=None, reviewed_knowledge=None):\n"
+        b"        pass\n"
         b"    def build(self, authority, origin, port, audit):\n"
         b"        if True:\n"
         b"            from persona_conversation import NativePersonaClient, PersonaAssistant\n"
@@ -28,6 +31,8 @@ def test_candidate_preserves_source_and_patches_exact_composition(monkeypatch):
         "AgentMultiIssuerGate if len(self.routes) > 1 else AgentRecipientGate" in result
     )
     assert "ReaderAgentDirectory(org, HumanDirectory(org), actors)" in result
+    assert "agent_actors=()" in result
+    assert "enabled_actors = frozenset(agent_actors)" in result
     assert "recipient.human is not None and super().available(headers)" in result
     assert "extra=True" in result
 

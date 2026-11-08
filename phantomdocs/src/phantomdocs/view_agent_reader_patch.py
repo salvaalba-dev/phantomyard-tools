@@ -16,6 +16,7 @@ GATE_ANCHOR = (
 )
 LOADER_ANCHOR = "origin, port, directory_loader=authority, audit=audit,\n"
 ASSISTANT_ANCHOR = "            from persona_conversation import NativePersonaClient, PersonaAssistant\n"
+PARAM_ANCHOR = "                 additional_issuers=None, reviewed_knowledge=None):\n"
 
 
 def patch_reader(source):
@@ -34,6 +35,7 @@ def patch_reader(source):
         GATE_ANCHOR,
         LOADER_ANCHOR,
         ASSISTANT_ANCHOR,
+        PARAM_ANCHOR,
     ):
         if text.count(anchor) != 1:
             raise ValueError("Reader composition changed")
@@ -57,14 +59,25 @@ def patch_reader(source):
         1,
     )
     text = text.replace(
+        PARAM_ANCHOR,
+        "                 additional_issuers=None, reviewed_knowledge=None, agent_actors=()):\n",
+        1,
+    )
+    text = text.replace(
         GATE_ANCHOR,
+        "        if not isinstance(agent_actors, (tuple, list, set, frozenset)) or "
+        "not all(isinstance(item, str) for item in agent_actors):\n"
+        "            raise ValueError('Trusted agent route configuration required')\n"
+        "        enabled_actors = frozenset(agent_actors)\n"
+        "        if not enabled_actors <= {route['actor'] for route in self.routes}:\n"
+        "            raise ValueError('Agent route is not configured')\n"
         "        gate_type = AgentMultiIssuerGate if len(self.routes) > 1 else AgentRecipientGate\n",
         1,
     )
     text = text.replace(
         LOADER_ANCHOR,
         "origin, port, directory_loader=agent_directory_loader(\n"
-        "                                      authority, frozenset(route['actor'] for route in self.routes)), audit=audit,\n",
+        "                                      authority, enabled_actors), audit=audit,\n",
         1,
     )
     text = text.replace(
