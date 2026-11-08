@@ -53,6 +53,45 @@ def test_agent_project_grant_inherits_category_without_human(scenario):
     assert permits_view(org, "agent", resource)
 
 
+def test_actor_scope_combines_organization_and_authorized_projects(scenario):
+    org, project = copy.deepcopy(scenario)
+    policy = org["policies"]
+    policy["security_categories"]["category-1"] = {}
+    policy["access_levels"]["basic"]["categories"].append("category-1")
+    policy["phantomview"]["scope_definitions"]["example"] = {"kind": "organization"}
+    general = project | {
+        "scope": {"id": "example", "kind": "organization"},
+        "project": None,
+        "category": "category-1",
+    }
+    assert not permits_view(org, "agent", general)
+    assert permits_view(org, "agent", general, actor_scope=True)
+    assert permits_view(org, "agent", project, actor_scope=True)
+    other = copy.deepcopy(project)
+    other["scope"]["id"] = other["project"] = "hill"
+    other["category"] = "category-4-hill"
+    assert not permits_view(org, "agent", other, actor_scope=True)
+    policy["phantomview"]["project_grants"]["agent"] = []
+    assert not permits_view(org, "agent", project, actor_scope=True)
+    policy["access_levels"]["basic"]["categories"].remove("category-1")
+    assert not permits_view(org, "agent", general, actor_scope=True)
+
+
+def test_actor_scope_still_requires_explicit_department_grant(scenario):
+    org, resource = copy.deepcopy(scenario)
+    org["departments"] = [{"id": "operations"}]
+    org["policies"]["phantomview"]["scope_definitions"]["operations"] = {
+        "kind": "department"
+    }
+    resource.update(scope={"id": "operations", "kind": "department"}, project=None)
+    org["policies"]["security_categories"]["category-1"] = {}
+    org["policies"]["access_levels"]["basic"]["categories"].append("category-1")
+    resource["category"] = "category-1"
+    assert not permits_view(org, "agent", resource, actor_scope=True)
+    org["policies"]["phantomview"]["persona_scope_grants"]["agent"].append("operations")
+    assert permits_view(org, "agent", resource, actor_scope=True)
+
+
 @pytest.mark.parametrize(
     "change", ["other_project", "other_category", "secret", "unknown_actor", "revoke"]
 )

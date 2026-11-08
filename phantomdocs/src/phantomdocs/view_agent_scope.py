@@ -8,8 +8,14 @@ and re-evaluate the current organization policy on each request.
 from phantomdocs.access import can_read, validate_org_schema
 
 
-def permits_view(org, actor, resource):
-    """Check exact scope and category grants for an agent, without human identity."""
+def permits_view(org, actor, resource, *, actor_scope=False):
+    """Check a resource against current agent grants.
+
+    Actor scope includes organization resources allowed by category and project
+    resources covered by explicit project grants. Department resources retain
+    their explicit scope grant until department inheritance is mapped.
+    The default preserves the original explicit viewer-scope policy.
+    """
     try:
         validate_org_schema(org)
         if not isinstance(actor, str) or not actor or not isinstance(resource, dict):
@@ -40,8 +46,10 @@ def permits_view(org, actor, resource):
         if (
             not isinstance(definition, dict)
             or definition.get("kind") != scope["kind"]
-            or not isinstance(grants, list)
-            or scope["id"] not in grants
+            or (
+                (not actor_scope or scope["kind"] == "department")
+                and (not isinstance(grants, list) or scope["id"] not in grants)
+            )
         ):
             return False
         if scope["kind"] == "organization" and scope["id"] != organization:
