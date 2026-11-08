@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from phantomdocs.access import validate_org_schema
 from phantomdocs.view_agent_scope import permits_view
 
+ACTOR_SCOPE = "agent-all"
+
 
 @dataclass(frozen=True)
 class AgentRecipient:
@@ -77,7 +79,13 @@ class AgentDirectory:
                     isinstance(row, dict) and row.get("id") == actor for row in actors
                 )
                 != 1
-                or not isinstance(definition, dict)
+            ):
+                return False
+            if scope_id == ACTOR_SCOPE:
+                # A real organization scope of the same name is ambiguous.
+                return scope_id not in policy["scope_definitions"]
+            if (
+                not isinstance(definition, dict)
                 or not isinstance(grants, list)
                 or scope_id not in grants
             ):
@@ -129,6 +137,8 @@ class AgentDirectory:
         if not isinstance(recipient, AgentRecipient):
             return self.human_directory.permits(recipient, resource)
         self.validate(recipient)
+        if recipient.scope_id == ACTOR_SCOPE:
+            return permits_view(self.org, recipient.persona, resource, actor_scope=True)
         return (
             isinstance(resource, dict)
             and isinstance(resource.get("scope"), dict)

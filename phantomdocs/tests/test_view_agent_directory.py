@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from phantomdocs.view_agent_directory import AgentDirectory
+from phantomdocs.view_agent_directory import ACTOR_SCOPE, AgentDirectory
 
 
 class HumanDirectory:
@@ -55,6 +55,46 @@ def test_actor_scope_and_human_route_are_separate(org):
     assert not directory.allows_action(recipient, "resource.edit", "river")
     assert directory.permits("human", "allowed")
     assert directory.allows_action("human", "allowed", "river")
+
+
+def test_all_agent_scope_includes_authorized_resources_and_revokes(org):
+    org["policies"]["security_categories"]["category-1"] = {}
+    org["policies"]["access_levels"]["basic"]["categories"].append("category-1")
+    org["policies"]["phantomview"]["scope_definitions"]["example"] = {
+        "kind": "organization"
+    }
+    directory = AgentDirectory(org, HumanDirectory(), frozenset({"agent"}))
+    recipient = directory.resolve_agent("agent", ACTOR_SCOPE)
+    project = {
+        "organization": "example",
+        "scope": {"kind": "project", "id": "river"},
+        "project": "river",
+        "category": "category-4",
+        "secret": False,
+    }
+    general = project | {
+        "scope": {"kind": "organization", "id": "example"},
+        "project": None,
+        "category": "category-1",
+    }
+    assert directory.permits(recipient, project)
+    assert directory.permits(recipient, general)
+    assert not directory.allows_action(recipient, "resource.edit", ACTOR_SCOPE)
+    changed = copy.deepcopy(org)
+    changed["policies"]["phantomview"]["project_grants"]["agent"] = []
+    changed["policies"]["access_levels"]["basic"]["categories"].remove("category-1")
+    revoked = AgentDirectory(changed, HumanDirectory(), frozenset({"agent"}))
+    with pytest.raises(ValueError):
+        revoked.validate(recipient)
+    current = revoked.resolve_agent("agent", ACTOR_SCOPE)
+    assert not revoked.permits(current, project)
+    assert not revoked.permits(current, general)
+    changed["policies"]["phantomview"]["scope_definitions"][ACTOR_SCOPE] = {
+        "kind": "organization"
+    }
+    ambiguous = AgentDirectory(changed, HumanDirectory(), frozenset({"agent"}))
+    with pytest.raises(ValueError):
+        ambiguous.resolve_agent("agent", ACTOR_SCOPE)
 
 
 def test_scope_and_policy_revocations_invalidate_sessions(org):

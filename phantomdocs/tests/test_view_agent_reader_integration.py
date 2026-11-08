@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import os
+from http.cookies import SimpleCookie
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,6 +42,23 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         status, body, _ = case.request("GET", "/api/state", cookie=cookie)
         assert status == 200
         assert case.hidden not in {row["id"] for row in body["resources"]}
+        link = case.application.gate.issue_identified(
+            case.authorization(),
+            case.options["origin"],
+            **fixture.context("102", "administrator", scope_id="agent-all"),
+        )
+        status, _, set_cookie = case.request(
+            "POST", "/api/redeem", {"code": link.split("#c=")[1]}
+        )
+        assert status == 200
+        parsed = SimpleCookie(set_cookie)
+        aggregate_cookie = "phantomview=" + parsed["phantomview"].value
+        status, aggregate, _ = case.request(
+            "GET", "/api/state", cookie=aggregate_cookie
+        )
+        assert status == 200
+        assert aggregate["scope_id"] == "agent-all"
+        assert case.hidden not in {row["id"] for row in aggregate["resources"]}
         native = importlib.import_module("persona_conversation")
         monkeypatch.setattr(native.PersonaAssistant, "available", lambda *_: True)
         app = candidate.PublishedReader(
@@ -67,5 +85,6 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         ] = []
         case.publish_authority()
         assert case.request("GET", "/api/state", cookie=cookie)[0] == 401
+        assert case.request("GET", "/api/state", cookie=aggregate_cookie)[0] == 401
     finally:
         case.doCleanups()
