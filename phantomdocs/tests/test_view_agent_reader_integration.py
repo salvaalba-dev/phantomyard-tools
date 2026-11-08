@@ -56,7 +56,7 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         status, aggregate, _ = case.request(
             "GET", "/api/state", cookie=aggregate_cookie
         )
-        assert status == 200
+        assert status == 200, aggregate
         assert aggregate["scope_id"] == "agent-all"
         assert case.hidden not in {row["id"] for row in aggregate["resources"]}
         native = importlib.import_module("persona_conversation")
