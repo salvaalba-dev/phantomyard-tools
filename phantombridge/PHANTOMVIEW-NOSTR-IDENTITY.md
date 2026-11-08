@@ -1,9 +1,10 @@
 # PhantomView Nostr identity primitive
 
 This experimental module verifies a direct NIP-17 gift wrap and resolves the
-verified human Nostr key to an explicitly assigned agent in an organization
-document. It fails closed on ambiguous or absent assignments. Examples and
-tests use synthetic keys only.
+verified human Nostr key to a human in an organization document and checks an
+explicit agent allowlist. Several humans may be listed for one agent. It fails
+closed on ambiguous identities and missing allowlists. Examples and tests use
+synthetic keys only.
 
 This is **not a running integration or an authorization decision**. It does
 not read or validate the trusted PhantomOrg source, enforce document ACLs,
@@ -15,8 +16,10 @@ untrusted caller or use its result to grant access on its own.
 An integration must validate the live organization and its inherited grants,
 perform replay-safe handoff, bind the authenticated human to the viewer's
 recipient session, recheck revocations, and preserve the existing bridge's
-message-delivery behavior. Each human's public Nostr key and counterpart agent
-must be explicitly declared. An agent key does not authenticate its human.
+message-delivery behavior. The selected agent and its allowlist must come from
+trusted configuration, not the caller. Each human's public Nostr key must be
+declared. An agent key does not authenticate its human. Allowlist membership
+alone does not grant access to documents; current PhantomOrg ACLs still apply.
 
 The companion `phantomview-telegram-identity.js` verifies the legacy Telegram
 Login Widget signature and timestamp without consuming bot updates. This is

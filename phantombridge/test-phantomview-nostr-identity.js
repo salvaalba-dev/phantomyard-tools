@@ -15,7 +15,8 @@ const org = {humans: [{id: 'human-a', npub: humanNpub, counterpart_persona: 'age
 const wrap = nip17.wrapEvent(humanKey, {publicKey: getPublicKey(receiverKey)}, 'request', undefined, undefined, now);
 const proof = verifiedDirectSender(wrap, receiverKey, now);
 assert.equal(proof.sender, humanNpub);
-assert.deepEqual(resolveHumanAgent(org, proof.sender), {human: 'human-a', agent: 'agent-a'});
+const resolve = (policy, sender = proof.sender, list = [proof.sender]) => resolveHumanAgent(policy, sender, 'nostr', 'agent-a', list);
+assert.deepEqual(resolve(org), {human: 'human-a', agent: 'agent-a'});
 assert.throws(() => verifiedDirectSender(wrap, otherKey, now));
 assert.throws(() => verifiedDirectSender(wrap, receiverKey, now + 259200), /expired/);
 const forged = JSON.parse(JSON.stringify(wrap));
@@ -27,9 +28,13 @@ const seal = finalizeEvent({kind: 13, created_at: now, tags: [], content: nip44.
 const wrapKey = generateSecretKey();
 const spoof = finalizeEvent({kind: 1059, created_at: now, tags: [['p', getPublicKey(receiverKey)]], content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, getPublicKey(receiverKey)))}, wrapKey);
 assert.throws(() => verifiedDirectSender(spoof, receiverKey, now), /Invalid message sender/);
-assert.throws(() => resolveHumanAgent({humans: [], actors: org.actors}, proof.sender));
-assert.throws(() => resolveHumanAgent({humans: [{id: 'x', npub: humanNpub}], actors: org.actors}, proof.sender));
-assert.throws(() => resolveHumanAgent({humans: [...org.humans, {...org.humans[0], id: 'human-b'}], actors: org.actors}, proof.sender));
-assert.throws(() => resolveHumanAgent({humans: org.humans, actors: []}, proof.sender));
-assert.throws(() => resolveHumanAgent({humans: org.humans, actors: [...org.actors, ...org.actors]}, proof.sender));
+assert.throws(() => resolve({humans: [], actors: org.actors}));
+assert.throws(() => resolve(org, proof.sender, []));
+assert.throws(() => resolve(org, proof.sender, [nip19.npubEncode(getPublicKey(otherKey))]));
+assert.throws(() => resolve({humans: [...org.humans, {...org.humans[0], id: 'human-b'}], actors: org.actors}));
+assert.throws(() => resolve({humans: org.humans, actors: []}));
+assert.throws(() => resolve({humans: org.humans, actors: [...org.actors, ...org.actors]}));
+const another = nip19.npubEncode(getPublicKey(otherKey));
+const multi = {humans: [...org.humans, {id: 'human-b', npub: another}], actors: org.actors};
+assert.equal(resolve(multi, another, [proof.sender, another]).human, 'human-b');
 console.log('Synthetic Nostr identity checks passed');
