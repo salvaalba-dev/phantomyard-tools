@@ -3,11 +3,15 @@ import threading
 
 import pytest
 from test_view_agent_directory import HumanDirectory
+from test_view_agent_directory import org as source_org
 
 from phantomdocs.view_agent_directory import AgentDirectory
 from phantomdocs.view_agent_gate import AgentGateMixin
 
-pytest_plugins = ["test_view_agent_directory"]
+
+@pytest.fixture
+def org():
+    return source_org.__wrapped__()
 
 
 class Links:
@@ -71,3 +75,4 @@ def test_agent_route_uses_scope_and_other_routes_stay_unchanged(org):
                                  sender="untrusted-display-value")
     recipient = gate.recipient_links[gate.digest(link.split("#c=")[1])][0]
     assert recipient.persona == "agent" and recipient.human is None
+
