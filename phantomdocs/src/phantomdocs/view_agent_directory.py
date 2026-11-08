@@ -40,6 +40,21 @@ class AgentScope:
     def __getattr__(self, name):
         return getattr(self.human_scope, name)
 
+    @property
+    def policy(self):
+        """Describe the synthetic aggregate to the viewer's navigation only."""
+        policy = json.loads(json.dumps(self.human_scope.policy, allow_nan=False))
+        view = policy["view_access"]
+        definitions = view["scope_definitions"]
+        if ACTOR_SCOPE in definitions:
+            return policy
+        definitions[ACTOR_SCOPE] = {"kind": "organization", "label": "Agent access"}
+        grants = view["persona_scope_grants"]
+        for actor in self.directory.enabled_actors:
+            if self.directory._scope_allowed(actor, ACTOR_SCOPE):
+                grants[actor] = [*grants.get(actor, []), ACTOR_SCOPE]
+        return policy
+
     def can_enter(self, human, persona, scope_id=None):
         if human is None:
             return self.directory._scope_allowed(persona, scope_id)
