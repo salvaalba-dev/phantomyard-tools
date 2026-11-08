@@ -16,15 +16,16 @@ def scenario():
             "access_levels": {"basic": {"categories": ["category-4"]}},
             "security_categories": {
                 "category-0": {},
+                "category-3": {},
                 "category-4": {"scope": "project"},
                 "category-4-river": {
                     "scope": "project",
-                    "owner": "river",
+                    "owner": "lead",
                     "parent": "category-4",
                 },
                 "category-4-hill": {
                     "scope": "project",
-                    "owner": "hill",
+                    "owner": "lead",
                     "parent": "category-4",
                 },
             },
@@ -50,6 +51,7 @@ def scenario():
 
 def test_agent_project_grant_inherits_category_without_human(scenario):
     org, resource = scenario
+    # A category owner is a role, not the project identifier.
     assert permits_view(org, "agent", resource)
 
 
@@ -101,7 +103,7 @@ def test_fails_closed_for_scope_category_secret_and_revocation(scenario, change)
     if change == "other_project":
         resource["scope"]["id"] = resource["project"] = "hill"
     elif change == "other_category":
-        resource["category"] = "category-4-hill"
+        resource["category"] = "category-3"
     elif change == "secret":
         resource["secret"] = True
     elif change == "unknown_actor":
