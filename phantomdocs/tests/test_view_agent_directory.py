@@ -1,4 +1,5 @@
 import copy
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +96,29 @@ def test_all_agent_scope_includes_authorized_resources_and_revokes(org):
     ambiguous = AgentDirectory(changed, HumanDirectory(), frozenset({"agent"}))
     with pytest.raises(ValueError):
         ambiguous.resolve_agent("agent", ACTOR_SCOPE)
+
+
+def test_aggregate_navigation_metadata_does_not_modify_human_policy(org):
+    human = HumanDirectory()
+    human.scope = SimpleNamespace(
+        policy={
+            "view_access": {
+                "scope_definitions": {"river": {"kind": "project"}},
+                "persona_scope_grants": {"agent": ["river"]},
+            }
+        }
+    )
+    directory = AgentDirectory(org, human, frozenset({"agent"}))
+    policy = directory.scope.policy
+    assert (
+        policy["view_access"]["scope_definitions"][ACTOR_SCOPE]["kind"]
+        == "organization"
+    )
+    assert ACTOR_SCOPE in policy["view_access"]["persona_scope_grants"]["agent"]
+    assert ACTOR_SCOPE not in human.scope.policy["view_access"]["scope_definitions"]
+    assert human.scope.policy["view_access"]["persona_scope_grants"]["agent"] == [
+        "river"
+    ]
 
 
 def test_scope_and_policy_revocations_invalidate_sessions(org):
