@@ -47,4 +47,3 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         assert case.request("GET", "/api/state", cookie=cookie)[0] == 401
     finally:
         case.doCleanups()
-
