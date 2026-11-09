@@ -89,7 +89,9 @@ def test_free_text_cannot_prove_a_restricted_document_is_absent(monkeypatch):
     monkeypatch.setattr(
         "phantomdocs.workflow_audit_native_acl.structural_issues", lambda _: []
     )
-    monkeypatch.setattr("phantomdocs.workflow_audit_native_acl.can_read", lambda *args: True)
+    monkeypatch.setattr(
+        "phantomdocs.workflow_audit_native_acl.can_read", lambda *args: True
+    )
     monkeypatch.setattr(
         "phantomdocs.workflow_audit_native_acl.can_observe_node", lambda *args: False
     )
