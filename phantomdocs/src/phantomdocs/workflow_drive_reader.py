@@ -39,7 +39,24 @@ class DriveArchiveReader:
                 "Drive token file must be owned by caller with mode 0600"
             )
         token = path.read_text(encoding="utf-8").strip()
-        if not token or len(token) > 16384 or any(ord(c) < 33 for c in token):
+        self._configure(token, max_bytes=max_bytes, transport=transport)
+
+    @classmethod
+    def from_token(cls, token, *, max_bytes, transport=None):
+        """Use an already acquired token without writing it to disk."""
+        obj = cls.__new__(cls)
+        obj._configure(token, max_bytes=max_bytes, transport=transport)
+        return obj
+
+    def _configure(self, token, *, max_bytes, transport):
+        if max_bytes <= 0:
+            raise WorkflowError("positive reference byte limit required")
+        if (
+            not isinstance(token, str)
+            or not token
+            or len(token) > 16384
+            or any(ord(c) < 33 for c in token)
+        ):
             raise WorkflowError("invalid Drive access-token file")
         self.token, self.max_bytes, self.cache = token, max_bytes, {}
         self.transport = transport or urllib.request.build_opener(_NoRedirect()).open
