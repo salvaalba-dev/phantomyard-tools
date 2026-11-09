@@ -66,7 +66,11 @@ def collect_evidence(inventory, reader, *, root_ref, matrix_ref, matrix_prefix):
     fields = ("id", "parents", "size", "version", "md5Checksum", "trashed")
     if any(before.get(k) != after.get(k) for k in fields):
         raise WorkflowError("matrix changed during observation")
-    if before.get("md5Checksum") != hashlib.md5(matrix).hexdigest():
+    # Drive supplies MD5 for transfer comparison; the evidence uses SHA-256.
+    if (
+        before.get("md5Checksum")
+        != hashlib.md5(matrix, usedforsecurity=False).hexdigest()
+    ):
         raise WorkflowError("matrix content does not match metadata")
     result = prepare_evidence(tree, matrix)
     result["matrix_ref"] = matrix_ref
