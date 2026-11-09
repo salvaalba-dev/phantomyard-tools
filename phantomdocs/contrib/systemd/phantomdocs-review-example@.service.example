@@ -1,0 +1,9 @@
+[Unit]
+Description=PhantomDocs review connection for an example agent
+
+[Service]
+User=root
+StandardInput=socket
+NoNewPrivileges=yes
+RuntimeMaxSec=15s
+ExecStart=/opt/phantomdocs/venv/bin/python -m phantomdocs.workflow_audit_peer --config /etc/phantomdocs/review/example.json

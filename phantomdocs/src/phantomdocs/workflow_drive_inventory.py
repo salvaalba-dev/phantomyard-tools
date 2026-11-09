@@ -56,7 +56,33 @@ class DriveInboxInventory:
                 "Drive token file must be owned by caller with mode 0600"
             )
         token = path.read_text(encoding="utf-8").strip()
-        if not token or len(token) > 16384 or any(ord(c) < 33 for c in token):
+        self._configure(
+            token, max_items=max_items, page_size=page_size, transport=transport
+        )
+
+    @classmethod
+    def from_token(cls, token, *, max_items=MAX_ITEMS, page_size=200, transport=None):
+        """Use an already acquired token without writing it to disk."""
+        obj = cls.__new__(cls)
+        obj._configure(
+            token, max_items=max_items, page_size=page_size, transport=transport
+        )
+        return obj
+
+    def _configure(self, token, *, max_items, page_size, transport):
+        if (
+            type(max_items) is not int
+            or not 1 <= max_items <= MAX_ITEMS
+            or type(page_size) is not int
+            or not 1 <= page_size <= 1000
+        ):
+            raise WorkflowError("invalid Drive inventory bounds")
+        if (
+            not isinstance(token, str)
+            or not token
+            or len(token) > 16384
+            or any(ord(c) < 33 for c in token)
+        ):
             raise WorkflowError("invalid Drive access-token file")
         self.token = token
         self.max_items = max_items

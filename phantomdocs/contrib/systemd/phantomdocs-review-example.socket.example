@@ -1,0 +1,13 @@
+[Unit]
+Description=PhantomDocs review socket for an example agent
+
+[Socket]
+ListenStream=/run/phantomdocs-review-example.sock
+SocketUser=pb-example
+SocketMode=0600
+Accept=yes
+RemoveOnStop=yes
+Service=phantomdocs-review-example@.service
+
+[Install]
+WantedBy=sockets.target
