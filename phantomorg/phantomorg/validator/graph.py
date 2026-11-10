@@ -27,7 +27,7 @@ def _edges(spec: OrgSpec) -> dict[str, list[str]]:
     """Graph role -> [roles it escalates to]. Ignores the wildcard '*'."""
     graph: dict[str, list[str]] = {r.id: [] for r in spec.roles}
     for entry in spec.escalation_matrix:
-        if entry.from_ == "*" or entry.kind == "response":
+        if entry.from_ == "*" or entry.kind in {"response", "coordination"}:
             continue
         graph.setdefault(entry.from_, []).append(entry.to)
     return graph

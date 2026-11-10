@@ -82,7 +82,7 @@
 
 {%- if escalation_entries %}
 {%- for e in escalation_entries %}
-- {{ (t.response_entry if e.kind == 'response' else t.norma_escalation_entry).format(condition=e.condition, to_name=e.to_name) }}{% if e.cross_department %}{{ t.norma_escalation_cross }}{% endif %}
+- {{ (t.response_entry if e.kind == 'response' else t.coordination_entry if e.kind == 'coordination' else t.norma_escalation_entry).format(condition=e.condition, to_name=e.to_name) }}{% if e.cross_department %}{{ t.norma_escalation_cross }}{% endif %}
 {%- endfor %}
 {%- else %}
 - {{ t.escalation_none }}

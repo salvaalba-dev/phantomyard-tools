@@ -53,17 +53,19 @@ def test_response_must_close_an_escalation_path(document):
             "from": "project_lead",
             "to": "ceo",
             "condition": "test",
-            "kind": "coordination",
         },
     ]
     validate_shape(document)
     check_no_cycles(OrgSpec.from_dict(document))
+    document["escalation_matrix"][1]["kind"] = "coordination"
+    with pytest.raises(EscalationResponseError):
+        check_no_cycles(OrgSpec.from_dict(document))
     document["escalation_matrix"].pop()
     with pytest.raises(EscalationResponseError):
         check_no_cycles(OrgSpec.from_dict(document))
 
 
-@pytest.mark.parametrize("kind", ["coordination", "unknown", None])
+@pytest.mark.parametrize("kind", ["unknown", None])
 def test_other_edge_kinds_still_detect_cycles(document, kind):
     document["escalation_matrix"] = [
         {
@@ -78,9 +80,28 @@ def test_other_edge_kinds_still_detect_cycles(document, kind):
         check_no_cycles(OrgSpec.from_dict(document))
 
 
+def test_coordination_can_be_bidirectional_without_creating_escalation(document):
+    document["escalation_matrix"] = [
+        {
+            "from": "ceo",
+            "to": "project_lead",
+            "condition": "test",
+            "kind": "coordination",
+        },
+        {
+            "from": "project_lead",
+            "to": "ceo",
+            "condition": "test",
+            "kind": "coordination",
+        },
+    ]
+    check_no_cycles(OrgSpec.from_dict(document))
+
+
 def test_response_is_rendered_as_terminal_not_escalation(document, tmp_path):
     from phantomorg.compiler import build
 
+    document["escalation_matrix"][0].pop("kind")
     document["escalation_matrix"].append(
         {
             "from": "ceo",
