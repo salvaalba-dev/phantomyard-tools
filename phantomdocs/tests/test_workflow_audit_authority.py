@@ -153,7 +153,8 @@ def test_peer_authorization_holds_both_locks_and_uses_trusted_bindings(monkeypat
         "native_manifest": "/store/manifest.yaml",
         "root_ref": "gdrive://trusted-root",
         "matrix_ref": "gdrive://trusted-matrix",
-        "project_category": "project",
+        "project_domain": "projects",
+        "project_type": "example",
     }
 
     @contextmanager
@@ -171,13 +172,28 @@ def test_peer_authorization_holds_both_locks_and_uses_trusted_bindings(monkeypat
         module + "policy_guard", lambda path, exclusive: guard("policy")
     )
     monkeypatch.setattr(module + "_read_protected", lambda path: b"policy")
-    monkeypatch.setattr(module + "parse_policy", lambda data: {"policy": True})
+    monkeypatch.setattr(
+        module + "parse_policy",
+        lambda data: {
+            "documents": {
+                "naming": {
+                    "domains": [
+                        {
+                            "id": "projects",
+                            "types": [{"id": "example", "category": "project"}],
+                        }
+                    ]
+                }
+            },
+            "policies": {"security_categories": {"project": {}}},
+        },
+    )
     monkeypatch.setattr(module + "manifest_lock", lambda path: guard("manifest"))
     monkeypatch.setattr(module + "load", lambda path: {"nodes": []})
 
     def check(evidence, org, actor, manifest, **binding):
         assert events == ["enter policy", "enter manifest"]
-        assert actor == "alma" and org == {"policy": True} and manifest == {"nodes": []}
+        assert actor == "alma" and manifest == {"nodes": []}
         assert binding == {
             "root_ref": "gdrive://trusted-root",
             "matrix_ref": "gdrive://trusted-matrix",
@@ -194,3 +210,82 @@ def test_peer_authorization_holds_both_locks_and_uses_trusted_bindings(monkeypat
         "leave manifest",
         "leave policy",
     ]
+
+
+def test_project_binding_tracks_policy_changes_and_rejects_ambiguity():
+    from phantomdocs.workflow_audit_authority import project_category
+
+    org = {
+        "documents": {
+            "naming": {
+                "domains": [
+                    {"id": "projects", "types": [{"id": "example", "category": "old"}]}
+                ]
+            }
+        },
+        "policies": {"security_categories": {"old": {}, "new": {}}},
+    }
+    assert project_category(org, "projects", "example") == "old"
+    types = org["documents"]["naming"]["domains"][0]["types"]
+    types[0]["category"] = "new"
+    assert project_category(org, "projects", "example") == "new"
+    types.append(dict(types[0]))
+    with pytest.raises(WorkflowError):
+        project_category(org, "projects", "example")
+    types.pop()
+    types[0]["category"] = "undeclared"
+    with pytest.raises(WorkflowError):
+        project_category(org, "projects", "example")
+
+
+def test_peer_rereads_project_category_after_policy_change(monkeypatch):
+    from contextlib import nullcontext
+
+    from phantomdocs.workflow_audit_authority import guarded_peer_authorizer
+
+    config = {
+        "version": 1,
+        "identity_map": "/map",
+        "policy_lock": "/policy.lock",
+        "org_path": "/org",
+        "native_manifest": "/manifest",
+        "root_ref": "gdrive://root",
+        "matrix_ref": "gdrive://matrix",
+        "project_domain": "projects",
+        "project_type": "example",
+    }
+    org = {
+        "documents": {
+            "naming": {
+                "domains": [
+                    {
+                        "id": "projects",
+                        "types": [{"id": "example", "category": "allowed"}],
+                    }
+                ]
+            }
+        },
+        "policies": {"security_categories": {"allowed": {}, "restricted": {}}},
+    }
+    module = "phantomdocs.workflow_audit_authority."
+    monkeypatch.setattr(module + "_json", lambda _: config)
+    monkeypatch.setattr(module + "resolve_peer_actor", lambda *_: "agent")
+    monkeypatch.setattr(module + "policy_guard", lambda *a, **k: nullcontext())
+    monkeypatch.setattr(module + "_read_protected", lambda _: b"policy")
+    monkeypatch.setattr(module + "parse_policy", lambda _: org)
+    monkeypatch.setattr(module + "manifest_lock", lambda _: nullcontext())
+    monkeypatch.setattr(module + "load", lambda _: {"nodes": []})
+
+    def check(*args, project_category, **kwargs):
+        if project_category != "allowed":
+            raise WorkflowError("denied")
+
+    monkeypatch.setattr(module + "authorize_observations", check)
+    with guarded_peer_authorizer("/config", object()) as authorize:
+        authorize({})
+    org["documents"]["naming"]["domains"][0]["types"][0]["category"] = "restricted"
+    with (
+        guarded_peer_authorizer("/config", object()) as authorize,
+        pytest.raises(WorkflowError),
+    ):
+        authorize({})
