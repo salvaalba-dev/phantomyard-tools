@@ -8,6 +8,10 @@ NOTICE = (
     'return `<div class="notice">${uiText("Document tree registered in PhantomDocs.'
 )
 SCRIPT_ANCHOR = "document.addEventListener('input',e=>{if(e.target.id==='kb-search')"
+SCOPED_SOURCE_SHA256 = (
+    "38f451f5cd9544dd2d578902b1fc7eda5828f0a8fad3c2f48371f4df272f9c1a"
+)
+SCOPED_ANCHOR = "    if(!records.childElementCount)records.append("
 
 
 def patch_ui(source):
@@ -39,3 +43,33 @@ def patch_ui(source):
         1,
     )
     return text.encode("utf-8")
+
+
+def patch_scoped_ui(source):
+    """Add the matrix control to the identified, scoped viewer revision."""
+    if (
+        not isinstance(source, bytes)
+        or hashlib.sha256(source).hexdigest() != SCOPED_SOURCE_SHA256
+    ):
+        raise ValueError("unsupported scoped viewer revision")
+    content = source.decode("utf-8")
+    if content.count(SCOPED_ANCHOR) != 1:
+        raise ValueError("scoped viewer composition changed")
+    addition = (
+        "    if(!search&&selected?.kind==='document'){\n"
+        "      const button=text('button','Open current matrix','card');button.type='button';\n"
+        "      button.addEventListener('click',async()=>{\n"
+        "        const ticket=epoch,detailTicket=++detailEpoch;\n"
+        "        $('detail-title').textContent='Project matrix';\n"
+        "        $('detail-content').textContent='Reading matrix…';\n"
+        "        if(!$('detail').open)$('detail').showModal();\n"
+        "        try{const data=await api('/api/matrix/current',undefined,controller.signal);\n"
+        "          if(ticket!==epoch||detailTicket!==detailEpoch||!$('detail').open)return;\n"
+        "          if(typeof data.content!=='string')throw Error('Matrix unavailable');\n"
+        "          $('detail-content').replaceChildren(text('pre',data.content,'profile-document-body'));\n"
+        "        }catch(error){if(ticket===epoch&&detailTicket===detailEpoch&&$('detail').open)"
+        "$('detail-content').textContent='Matrix unavailable';}\n"
+        "      });records.prepend(button);\n"
+        "    }\n"
+    )
+    return content.replace(SCOPED_ANCHOR, addition + SCOPED_ANCHOR, 1).encode("utf-8")
