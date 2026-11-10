@@ -19,11 +19,15 @@ class EscalationCycleError(Exception):
         super().__init__("Cycle detected in escalation_matrix: " + " -> ".join(cycle))
 
 
+class EscalationResponseError(Exception):
+    """A response must close an existing escalation path."""
+
+
 def _edges(spec: OrgSpec) -> dict[str, list[str]]:
     """Graph role -> [roles it escalates to]. Ignores the wildcard '*'."""
     graph: dict[str, list[str]] = {r.id: [] for r in spec.roles}
     for entry in spec.escalation_matrix:
-        if entry.from_ == "*":
+        if entry.from_ == "*" or entry.kind == "response":
             continue
         graph.setdefault(entry.from_, []).append(entry.to)
     return graph
@@ -32,6 +36,23 @@ def _edges(spec: OrgSpec) -> dict[str, list[str]]:
 def check_no_cycles(spec: OrgSpec) -> None:
     """Raises EscalationCycleError if there is a cycle; otherwise returns nothing."""
     graph = _edges(spec)
+
+    for entry in spec.escalation_matrix:
+        if entry.kind != "response":
+            continue
+        # A return route cannot invent an escalation or use a wildcard.
+        todo = [entry.to]
+        seen: set[str] = set()
+        while todo:
+            current = todo.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            todo.extend(graph.get(current, []))
+        if entry.from_ == "*" or entry.from_ == entry.to or entry.from_ not in seen:
+            raise EscalationResponseError(
+                f"response {entry.from_} -> {entry.to} does not close an escalation path"
+            )
 
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {node: WHITE for node in graph}

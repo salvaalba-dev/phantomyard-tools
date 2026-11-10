@@ -11,7 +11,7 @@ from pathlib import Path
 from ..spec.loader import OrgSpecError, load_org_yaml
 from ..spec.model import OrgSpec
 from .budgets import check_memory_budget, check_soul_budget
-from .graph import EscalationCycleError, check_no_cycles
+from .graph import EscalationCycleError, EscalationResponseError, check_no_cycles
 from .refs import check_references, suggest_role_level_exceptions
 
 
@@ -41,7 +41,7 @@ def validate_org(org_yaml_path: str | Path) -> tuple[OrgSpec, ValidationResult]:
 
     try:
         check_no_cycles(spec)
-    except EscalationCycleError as e:
+    except (EscalationCycleError, EscalationResponseError) as e:
         result.errors.append(str(e))
 
     result.errors.extend(check_references(spec))

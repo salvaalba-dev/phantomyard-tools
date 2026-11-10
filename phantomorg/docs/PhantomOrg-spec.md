@@ -793,3 +793,7 @@ These entries are descriptive metadata only. They do not authenticate users, del
 ### PhantomView integration metadata
 
 PhantomOrg accepts optional `organization.display_name`, `humans[].counterpart_persona`, and `escalation_matrix[].kind` fields and preserves them in the loaded model. A counterpart is descriptive and does not authenticate anyone or grant access. The optional `policies.phantomview` mapping belongs to PhantomView: PhantomOrg checks that it is a mapping and preserves it, but does not validate its internal policy semantics. PhantomView remains responsible for validating and enforcing its own policy. Existing cycle and cross-reference checks remain in force; accepting these fields does not make an invalid organization valid or change its authorization.
+
+### Escalation responses
+
+An explicit `kind: response` identifies a terminal return to a role that can reach the responder through existing directed escalation edges. A response cannot refer to itself or use a wildcard, and an invalid return fails validation. Return edges remain communication routes but are not new escalation steps. Generated role and organization guidance labels them as responses that close the escalation. All other kinds remain escalation edges for cycle detection, and communication routing is unchanged. Enforced transport anti-loop controls remain necessary; generated instructions are not an authentication or authorization boundary.
