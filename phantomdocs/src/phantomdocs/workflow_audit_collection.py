@@ -26,11 +26,13 @@ def _private_file(fd, owner_uid):
 
 @contextmanager
 def collection_guard(directory, owner_uid, *, writer):
-    """Keep failed or interrupted collections unavailable to new readers.
+    """Block new readers during a marked collection attempt.
 
     The directory must already be opened and validated by the caller. Readers
     never create state. A writer holds an exclusive lock through publication;
-    its pending marker survives errors and process termination.
+    its pending marker survives errors and process termination after it is
+    created. The caller must separately handle failures before marker creation
+    and failures while clearing or syncing it.
     """
     if fcntl is None:
         raise ValueError("collection coordination requires POSIX locks")
