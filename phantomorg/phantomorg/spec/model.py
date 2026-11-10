@@ -8,6 +8,7 @@ shape_validator.py; these classes only type and offer resolution helpers
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 
 from .service_policy import ServicePolicy
@@ -20,6 +21,7 @@ class Organization:
     sector: str
     languages: list[str]
     default_language: str | None = None
+    display_name: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Organization:
@@ -29,6 +31,7 @@ class Organization:
             sector=d["sector"],
             languages=list(d["languages"]),
             default_language=d.get("default_language"),
+            display_name=d.get("display_name"),
         )
 
 
@@ -126,6 +129,7 @@ class Human:
     telegram_user_id: int | None = None
     npub: str | None = None
     email: str | None = None
+    counterpart_persona: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Human:
@@ -136,6 +140,7 @@ class Human:
             telegram_user_id=d.get("telegram_user_id"),
             npub=d.get("npub"),
             email=d.get("email"),
+            counterpart_persona=d.get("counterpart_persona"),
         )
 
 
@@ -157,6 +162,7 @@ class SecurityCategory:
 class Policies:
     access_levels: dict[str, AccessLevel]
     security_categories: dict[str, SecurityCategory]
+    phantomview: dict | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Policies:
@@ -173,7 +179,11 @@ class Policies:
             )
             for k, v in d.get("security_categories", {}).items()
         }
-        return cls(access_levels=levels, security_categories=cats)
+        return cls(
+            access_levels=levels,
+            security_categories=cats,
+            phantomview=copy.deepcopy(d.get("phantomview")),
+        )
 
 
 @dataclass
@@ -182,6 +192,7 @@ class EscalationEntry:
     to: str
     condition: str
     cross_department: bool = False
+    kind: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> EscalationEntry:
@@ -190,6 +201,7 @@ class EscalationEntry:
             to=d["to"],
             condition=d["condition"],
             cross_department=d.get("cross_department", False),
+            kind=d.get("kind"),
         )
 
 

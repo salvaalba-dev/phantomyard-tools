@@ -789,3 +789,7 @@ email_correspondence:
 ```
 
 These entries are descriptive metadata only. They do not authenticate users, delegate an identity, grant access, change existing email fields, or modify Drive permissions. References must exist and correspondence addresses must be unique, ignoring case. They are part of the organization document and therefore change its policy hash. Upgrade every strict PhantomOrg reader and validate policy publication and recovery before adding this optional key to a live organization: older readers reject it. Never infer a person's identity solely from a shared account.
+
+### PhantomView integration metadata
+
+PhantomOrg accepts optional `organization.display_name`, `humans[].counterpart_persona`, and `escalation_matrix[].kind` fields and preserves them in the loaded model. A counterpart is descriptive and does not authenticate anyone or grant access. The optional `policies.phantomview` mapping belongs to PhantomView: PhantomOrg checks that it is a mapping and preserves it, but does not validate its internal policy semantics. PhantomView remains responsible for validating and enforcing its own policy. Existing cycle and cross-reference checks remain in force; accepting these fields does not make an invalid organization valid or change its authorization.

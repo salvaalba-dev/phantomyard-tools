@@ -35,6 +35,9 @@
         "name": {
           "type": "string"
         },
+        "display_name": {
+          "type": "string"
+        },
         "sector": {
           "type": "string"
         },
@@ -213,6 +216,10 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "phantomview": {
+          "type": "object",
+          "description": "Opaque PhantomView policy namespace; semantics are validated by PhantomView."
+        },
         "access_levels": {
           "type": "object",
           "additionalProperties": {
@@ -298,6 +305,9 @@
             "type": "string"
           },
           "condition": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           },
           "cross_department": {
@@ -436,6 +446,10 @@
           },
           "role": {
             "type": "string"
+          },
+          "counterpart_persona": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
           },
           "telegram_user_id": {
             "type": [
