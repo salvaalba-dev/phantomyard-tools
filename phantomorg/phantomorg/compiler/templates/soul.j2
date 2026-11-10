@@ -60,7 +60,7 @@ Search memory before answering; capture new durable facts as you go. Prefer acti
 ## {{ t.escalation_header }}
 {% if escalation_paths %}
 {% for e in escalation_paths %}
-- {{ (t.response_entry if e.kind == 'response' else t.escalation_entry).format(condition=e.condition, to_name=e.to_name) }}{% if e.cross_department %}{{ t.escalation_cross_department }}{% endif %}.
+- {{ (t.response_entry if e.kind == 'response' else t.coordination_entry if e.kind == 'coordination' else t.escalation_entry).format(condition=e.condition, to_name=e.to_name) }}{% if e.cross_department %}{{ t.escalation_cross_department }}{% endif %}.
 {% endfor %}
 {% else %}
 - {{ t.escalation_none }}
