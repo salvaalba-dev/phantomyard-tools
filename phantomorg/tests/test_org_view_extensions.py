@@ -9,7 +9,11 @@ import yaml
 
 from phantomorg.spec.model import OrgSpec
 from phantomorg.spec.shape_validator import ShapeError, validate_shape
-from phantomorg.validator.graph import EscalationCycleError, check_no_cycles
+from phantomorg.validator.graph import (
+    EscalationCycleError,
+    EscalationResponseError,
+    check_no_cycles,
+)
 
 ROOT = Path(__file__).parent.parent
 
@@ -42,7 +46,7 @@ def test_extensions_validate_and_survive_model_loading(document):
     assert spec.policies.phantomview == document["policies"]["phantomview"]
 
 
-def test_edge_kind_does_not_bypass_cycle_detection(document):
+def test_response_must_close_an_escalation_path(document):
     document["escalation_matrix"] = [
         {"from": "ceo", "to": "project_lead", "condition": "test", "kind": "response"},
         {
@@ -53,8 +57,44 @@ def test_edge_kind_does_not_bypass_cycle_detection(document):
         },
     ]
     validate_shape(document)
+    check_no_cycles(OrgSpec.from_dict(document))
+    document["escalation_matrix"].pop()
+    with pytest.raises(EscalationResponseError):
+        check_no_cycles(OrgSpec.from_dict(document))
+
+
+@pytest.mark.parametrize("kind", ["coordination", "unknown", None])
+def test_other_edge_kinds_still_detect_cycles(document, kind):
+    document["escalation_matrix"] = [
+        {
+            "from": "ceo",
+            "to": "project_lead",
+            "condition": "test",
+            "kind": kind,
+        },
+        {"from": "project_lead", "to": "ceo", "condition": "test"},
+    ]
     with pytest.raises(EscalationCycleError):
         check_no_cycles(OrgSpec.from_dict(document))
+
+
+def test_response_is_rendered_as_terminal_not_escalation(document, tmp_path):
+    from phantomorg.compiler import build
+
+    document["escalation_matrix"].append(
+        {
+            "from": "ceo",
+            "to": "project_lead",
+            "condition": "close the case",
+            "kind": "response",
+        }
+    )
+    spec = OrgSpec.from_dict(document)
+    check_no_cycles(spec)
+    build(spec, tmp_path, only="marco")
+    soul = (tmp_path / "marco" / "SOUL.md").read_text(encoding="utf-8")
+    assert "close the case, responde a" in soul
+    assert "close the case, escala a" not in soul
 
 
 @pytest.mark.parametrize(

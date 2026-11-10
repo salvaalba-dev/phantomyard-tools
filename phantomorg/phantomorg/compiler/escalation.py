@@ -15,6 +15,7 @@ class ResolvedEscalation:
     to_name: str
     condition: str
     cross_department: bool
+    kind: str | None = None
 
 
 def escalation_paths_for(spec: OrgSpec, role_id: str) -> list[ResolvedEscalation]:
@@ -27,6 +28,7 @@ def escalation_paths_for(spec: OrgSpec, role_id: str) -> list[ResolvedEscalation
                     to_name=to_role.name,
                     condition=entry.condition,
                     cross_department=entry.cross_department,
+                    kind=entry.kind,
                 )
             )
     return paths

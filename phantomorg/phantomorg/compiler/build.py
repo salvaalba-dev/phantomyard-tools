@@ -288,6 +288,7 @@ def _norma_context(spec: OrgSpec) -> dict:
             "condition": e.condition,
             "to_name": _role_name(spec, e.to),
             "cross_department": e.cross_department,
+            "kind": e.kind,
         }
         for e in spec.escalation_matrix
     ]
