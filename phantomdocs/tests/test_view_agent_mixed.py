@@ -1,9 +1,11 @@
 import base64
+import hashlib
 import json
 
 import pytest
 
 from phantomdocs.view_agent_mixed import MixedAgentGateMixin, validate_mixed_signers
+from phantomdocs.view_agent_mixed_patch import _replace
 
 
 def header(key):
@@ -51,3 +53,11 @@ def test_mixed_signers_must_be_distinct_verified_route_subset():
     for mapping in ({"agent": ["c" * 64]}, {"agent": ["a" * 64, "b" * 64]}):
         with pytest.raises(ValueError):
             validate_mixed_signers(mapping, routes, {"agent"})
+
+
+def test_pinned_composition_preserves_crlf():
+    source = b"def f():\r\n    return 1\r\n"
+    output = _replace(
+        source, hashlib.sha256(source).hexdigest(), [("return 1\n", "return 2\n")]
+    )
+    assert output == b"def f():\r\n    return 2\r\n"
