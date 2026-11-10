@@ -11,12 +11,14 @@ def _replace(source, digest, replacements):
     if not isinstance(source, bytes) or hashlib.sha256(source).hexdigest() != digest:
         raise ValueError("Unsupported viewer revision")
     text = source.decode("utf-8")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    text = text.replace("\r\n", "\n")
     for old, new in replacements:
         if text.count(old) != 1:
             raise ValueError("Viewer composition changed")
         text = text.replace(old, new, 1)
     ast.parse(text)
-    return text.encode("utf-8")
+    return text.replace("\n", newline).encode("utf-8")
 
 
 def patch_reader(source):
