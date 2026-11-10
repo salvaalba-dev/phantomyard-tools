@@ -299,6 +299,23 @@ class Communication:
 
 
 @dataclass
+class EmailCorrespondence:
+    """Administrative metadata, not authentication or an ACL grant."""
+
+    email: str
+    humans: list[str] = field(default_factory=list)
+    actors: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmailCorrespondence:
+        return cls(
+            email=d["email"],
+            humans=list(d.get("humans", [])),
+            actors=list(d.get("actors", [])),
+        )
+
+
+@dataclass
 class OrgSpec:
     """Complete (shape-level) validated representation of org.yaml."""
 
@@ -312,6 +329,7 @@ class OrgSpec:
     escalation_matrix: list[EscalationEntry]
     communication: Communication
     service_policy: ServicePolicy | None = None
+    email_correspondence: list[EmailCorrespondence] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict) -> OrgSpec:
@@ -322,6 +340,10 @@ class OrgSpec:
             roles=[Role.from_dict(x) for x in d["roles"]],
             actors=[Actor.from_dict(x) for x in d["actors"]],
             humans=[Human.from_dict(x) for x in d.get("humans", [])],
+            email_correspondence=[
+                EmailCorrespondence.from_dict(x)
+                for x in d.get("email_correspondence", [])
+            ],
             policies=Policies.from_dict(d["policies"]),
             escalation_matrix=[
                 EscalationEntry.from_dict(x) for x in d["escalation_matrix"]

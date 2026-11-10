@@ -230,6 +230,7 @@ _ROOT_KEYS = {
     "roles",
     "actors",
     "humans",
+    "email_correspondence",
     "policies",
     "escalation_matrix",
     "communication",
@@ -472,6 +473,32 @@ def validate_shape(raw: dict) -> None:
                     f"humans[{i}].npub: invalid NIP-19 npub {h['npub']!r} — "
                     "expected 'npub1' + 62 bech32 chars with a valid checksum"
                 )
+
+    # Correspondence is administrative metadata and never grants access.
+    if "email_correspondence" in raw:
+        entries = _require_list(raw["email_correspondence"], "email_correspondence")
+        actor_ids = {a["id"] for a in raw["actors"]}
+        human_ids = {h["id"] for h in raw.get("humans", [])}
+        addresses = set()
+        for i, entry in enumerate(entries):
+            path = f"email_correspondence[{i}]"
+            entry = _require_mapping(entry, path)
+            _reject_unknown_keys(entry, {"email", "humans", "actors"}, path)
+            _require(entry, "email", path)
+            if not _is_valid_email(entry["email"]):
+                raise ShapeError(f"{path}.email: invalid email")
+            address = entry["email"].casefold()
+            if address in addresses:
+                raise ShapeError(f"{path}.email: duplicate correspondence")
+            addresses.add(address)
+            for key in ("humans", "actors"):
+                _require_string_list(entry.get(key, []), f"{path}.{key}")
+            if not entry.get("humans") and not entry.get("actors"):
+                raise ShapeError(f"{path}: at least one human or actor is required")
+            for key, known in (("humans", human_ids), ("actors", actor_ids)):
+                refs = entry.get(key, [])
+                if len(refs) != len(set(refs)) or any(ref not in known for ref in refs):
+                    raise ShapeError(f"{path}.{key}: duplicate or unknown reference")
 
     policies = _require_mapping(raw["policies"], "policies")
     _reject_unknown_keys(policies, _POLICIES_KEYS, "policies")
