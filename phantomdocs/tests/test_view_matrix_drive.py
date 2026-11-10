@@ -29,9 +29,10 @@ def test_reads_as_expected_local_agent_and_limits_size(monkeypatch):
 
     @contextmanager
     def temporary_file(**kwargs):
-        with tempfile.TemporaryDirectory() as directory, open(
-            os.path.join(directory, "output"), "w+b"
-        ) as stream:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            open(os.path.join(directory, "output"), "w+b") as stream,
+        ):
             yield stream
 
     monkeypatch.setattr(
