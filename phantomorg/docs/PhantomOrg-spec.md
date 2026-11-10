@@ -797,3 +797,7 @@ PhantomOrg accepts optional `organization.display_name`, `humans[].counterpart_p
 ### Escalation responses
 
 An explicit `kind: response` identifies a terminal return to a role that can reach the responder through existing directed escalation edges. A response cannot refer to itself or use a wildcard, and an invalid return fails validation. `kind: coordination` describes a communication route rather than an escalation and can be bidirectional. Return and coordination edges remain communication routes but are not escalation steps. Generated guidance identifies each kind. Unknown kinds remain escalation edges for cycle detection. Communication routing is unchanged. Enforced transport anti-loop controls remain necessary; generated instructions are not an authentication or authorization boundary.
+
+### Department and role identifiers
+
+A role may use the same identifier as its own department. References to roles and departments are resolved in their respective typed namespaces, and the role must actually belong to that department. Identifiers must otherwise remain distinct across departments, roles, actors and humans; in particular, actor/role owner references must remain unambiguous. This validation rule does not alter access categories, owners, routing or existing identifiers.
