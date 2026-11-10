@@ -237,7 +237,7 @@ _ROOT_KEYS = {
     "documents",
     "service_policy",
 }
-_ORG_KEYS = {"id", "name", "sector", "languages", "default_language"}
+_ORG_KEYS = {"id", "name", "sector", "languages", "default_language", "display_name"}
 _DEPARTMENT_KEYS = {"id", "name", "access_policy", "parent"}
 _ROLE_KEYS = {
     "id",
@@ -269,11 +269,12 @@ _HUMAN_KEYS = {
     "telegram_user_id",
     "npub",
     "email",
+    "counterpart_persona",
 }
-_POLICIES_KEYS = {"access_levels", "security_categories"}
+_POLICIES_KEYS = {"access_levels", "security_categories", "phantomview"}
 _ACCESS_LEVEL_KEYS = {"label", "categories"}
 _SECURITY_CATEGORY_KEYS = {"label", "scope", "owner", "parent"}
-_ESCALATION_KEYS = {"from", "to", "condition", "cross_department"}
+_ESCALATION_KEYS = {"from", "to", "condition", "cross_department", "kind"}
 _COMMUNICATION_KEYS = {
     "request_id_format",
     "message_types",
@@ -336,6 +337,8 @@ def validate_shape(raw: dict) -> None:
         _require(org, key, "organization")
     _require_id(org["id"], "organization.id")
     _require_type(org["name"], str, "organization.name")
+    if "display_name" in org:
+        _require_type(org["display_name"], str, "organization.display_name")
     _require_type(org["sector"], str, "organization.sector")
     _require_string_list(org["languages"], "organization.languages")
     if not org["languages"]:
@@ -462,6 +465,10 @@ def validate_shape(raw: dict) -> None:
             )
             _require_optional_type(h.get("npub"), str, f"humans[{i}].npub")
             _require_optional_type(h.get("email"), str, f"humans[{i}].email")
+            if "counterpart_persona" in h:
+                _require_id(
+                    h["counterpart_persona"], f"humans[{i}].counterpart_persona"
+                )
             if h.get("email") is not None and not _is_valid_email(h["email"]):
                 raise ShapeError(
                     f"humans[{i}].email: invalid email {h['email']!r} — "
@@ -502,6 +509,9 @@ def validate_shape(raw: dict) -> None:
 
     policies = _require_mapping(raw["policies"], "policies")
     _reject_unknown_keys(policies, _POLICIES_KEYS, "policies")
+    # PhantomView owns and validates the semantics of its policy namespace.
+    if "phantomview" in policies:
+        _require_mapping(policies["phantomview"], "policies.phantomview")
     for key in ["access_levels", "security_categories"]:
         _require(policies, key, "policies")
 
@@ -565,6 +575,8 @@ def validate_shape(raw: dict) -> None:
         _require_type(e["from"], str, f"escalation_matrix[{i}].from")
         _require_type(e["to"], str, f"escalation_matrix[{i}].to")
         _require_type(e["condition"], str, f"escalation_matrix[{i}].condition")
+        if "kind" in e:
+            _require_type(e["kind"], str, f"escalation_matrix[{i}].kind")
         # cross_department is optional but must be a real bool when
         # present; an explicit null violates schema.json's
         # {"type": "boolean"} and silently distinguishes null from false.
