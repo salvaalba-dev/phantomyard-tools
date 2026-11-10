@@ -15,8 +15,10 @@ before the marker is created or while it is cleared and synced. Existing
 snapshots without this coordination must be collected again.
 
 The peer requires a protected identity map, an administrator-controlled binding
-between the Drive root and project category, the current PhantomOrg policy and
-the native document catalog. It checks all known document versions because the
+between the Drive root and PhantomOrg naming domain and project type, the current
+PhantomOrg policy and the native document catalog. It resolves the project's
+category from the current policy on every request and refuses missing or
+ambiguous bindings. It checks all known document versions because the
 unfiltered matrix can mention documents without their identifiers. This can
 deny a whole review when any catalog document is inaccessible. The policy and
 catalog locks protect the check and the socket write. Once bytes have entered

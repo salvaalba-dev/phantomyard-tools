@@ -70,6 +70,31 @@ def recheck_authority(evidence, org, actor):
     )
 
 
+def project_category(org, domain_id, type_id):
+    """Resolve the current project category from PhantomOrg, failing closed."""
+    if not all(isinstance(x, str) and x for x in (domain_id, type_id)):
+        raise WorkflowError("invalid project binding")
+    try:
+        domains = org["documents"]["naming"]["domains"]
+        categories = org["policies"]["security_categories"]
+    except (KeyError, TypeError) as exc:
+        raise WorkflowError("project policy unavailable") from exc
+    if not isinstance(domains, list) or not isinstance(categories, dict):
+        raise WorkflowError("project policy unavailable")
+    matches = [d for d in domains if isinstance(d, dict) and d.get("id") == domain_id]
+    if len(matches) != 1 or not isinstance(matches[0].get("types"), list):
+        raise WorkflowError("unknown or ambiguous project domain")
+    types = [
+        t for t in matches[0]["types"] if isinstance(t, dict) and t.get("id") == type_id
+    ]
+    if len(types) != 1:
+        raise WorkflowError("unknown or ambiguous project type")
+    category = types[0].get("category")
+    if not isinstance(category, str) or category not in categories:
+        raise WorkflowError("project category is not declared")
+    return category
+
+
 @contextmanager
 def guarded_authorizer(config_path):
     """Hold the cooperating PhantomOrg policy lock until delivery finishes.
@@ -131,7 +156,8 @@ def guarded_peer_authorizer(config_path, connection):
         "native_manifest",
         "root_ref",
         "matrix_ref",
-        "project_category",
+        "project_domain",
+        "project_type",
     }
     if (
         not isinstance(config, dict)
@@ -158,7 +184,9 @@ def guarded_peer_authorizer(config_path, connection):
                     manifest,
                     root_ref=config["root_ref"],
                     matrix_ref=config["matrix_ref"],
-                    project_category=config["project_category"],
+                    project_category=project_category(
+                        org, config["project_domain"], config["project_type"]
+                    ),
                 )
 
             yield authorize
