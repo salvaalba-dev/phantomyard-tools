@@ -6,11 +6,13 @@ not register documents, reconcile the matrix, or establish that an audit is
 complete. The review output always reports `complete_audit: false`.
 
 The collector keeps the short-lived Drive token in process memory. A collection
-attempt takes an exclusive lock and leaves a pending marker if it fails or is
-interrupted. Readers reject missing coordination state, pending attempts and
-concurrent collections; a successful retry publishes a new snapshot before
-clearing the marker. Existing snapshots created without this coordination are
-not readable by the revised bridge and must be collected again.
+attempt takes an exclusive lock and creates a pending marker before collection.
+Once created, the marker survives collection failure or interruption until a
+successful retry publishes a new snapshot. Readers reject missing coordination
+state, pending attempts and concurrent collections. A supervisor must also
+refuse to start the wake if collection exits unsuccessfully, including failures
+before the marker is created or while it is cleared and synced. Existing
+snapshots without this coordination must be collected again.
 
 The peer requires a protected identity map, an administrator-controlled binding
 between the Drive root and project category, the current PhantomOrg policy and
