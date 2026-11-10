@@ -144,14 +144,20 @@ def check_references(spec: OrgSpec) -> list[str]:
                     f"{label}: id '{item_id}' appears {count} times (must be unique)"
                 )
 
-    # Global id uniqueness: an actor, role or department sharing the same id
-    # would make hand-edited YAML ambiguous (which entity does 'ceo' mean?).
-    # References resolve within their own group, so this is not a correctness
-    # bug, but the spec treats ids as org-wide identifiers.
+    # Keep principals and unrelated entities globally distinct. A role may
+    # share its own department's id: role and department references are typed,
+    # while actor/role owners remain unambiguous. Do not allow this exception
+    # when the role belongs to another department.
     all_ids: dict[str, str] = {}  # id -> first group that declared it
     for label, items in groups:
         for item in items:
             if item.id in all_ids and all_ids[item.id] != label:
+                if (
+                    label == "roles"
+                    and all_ids[item.id] == "departments"
+                    and item.department == item.id
+                ):
+                    continue
                 problems.append(
                     f"{label}: id '{item.id}' collides with "
                     f"{all_ids[item.id]} (ids must be unique org-wide)"
