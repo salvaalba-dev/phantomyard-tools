@@ -6,6 +6,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
+
 from phantomorg.spec.model import OrgSpec
 from phantomorg.spec.shape_validator import ShapeError, validate_shape
 
