@@ -38,7 +38,7 @@ def deliver_matrix(*, gate, headers, version, bindings, authority, send):
         scope_id = binding["scope_id"]
         resource = {
             "organization": org["organization"]["id"],
-            "secret": False,
+            "secret": False,  # nosec B105 - classification flag, not a password
             "scope": {"id": scope_id, "kind": "project"},
             "project": scope_id,
             "category": project_category(

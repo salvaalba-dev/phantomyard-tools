@@ -7,7 +7,7 @@ with a reviewed tool path and environment. No credential is read by the broker.
 import os
 import re
 import stat
-import subprocess
+import subprocess  # nosec B404 - agent-scoped Workspace subprocess
 import tempfile
 
 from .view_matrix import MAX_MATRIX_BYTES
@@ -33,7 +33,7 @@ def read_workspace(ref, limit, *, workspace, expected_uid, timeout=20):
     ):
         raise ValueError("workspace reader unavailable")
     with tempfile.NamedTemporaryFile(prefix="pd-matrix-") as output:
-        subprocess.run(
+        subprocess.run(  # nosec B603 - fixed arguments, no shell, agent UID
             [workspace, "drive", "download", match.group(1), output.name],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

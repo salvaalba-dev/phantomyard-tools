@@ -43,7 +43,7 @@ def deliver(*, gate, headers, version, routes, send):
         project = route["scope_id"]
         resource = {
             "organization": org["organization"]["id"],
-            "secret": False,
+            "secret": False,  # nosec B105 - classification flag, not a password
             "scope": {"id": project, "kind": "project"},
             "project": project,
             "category": project_category(org, route["domain"], route["project_type"]),
