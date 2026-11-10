@@ -460,6 +460,24 @@
         }
       }
     },
+    "email_correspondence": {
+      "type": "array",
+      "description": "Administrative correspondence only; not authentication or authorization.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email"],
+        "anyOf": [
+          {"required": ["humans"], "properties": {"humans": {"minItems": 1}}},
+          {"required": ["actors"], "properties": {"actors": {"minItems": 1}}}
+        ],
+        "properties": {
+          "email": {"type": "string", "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"},
+          "humans": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "actors": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+        }
+      }
+    },
     "documents": {
       "type": "object",
       "description": "Opaque PhantomDocs namespace block (owned by phantomdocs, tolerated by PhantomOrg)"

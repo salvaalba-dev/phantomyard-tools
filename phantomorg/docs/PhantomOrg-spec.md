@@ -774,3 +774,18 @@ The scaffold mirrors Phantombot's `personaScaffold.ts` exactly: `memory/` gets t
 4. **Kickoff**: should I start with Epic 0 (T0.1–T0.5) this week, using dana as a smoke pilot before touching AU's 5 real personas?
 
 With a green light, this document (sections 5–10) is enough for an LLM in Claude Code to bootstrap the repo without any more context than this file.
+
+### Administrative email correspondence
+
+Optional `email_correspondence` entries record relationships between email accounts and existing human and actor IDs. A shared account can name more than one member, while a personal alternate account can name one human. Example (synthetic):
+
+```yaml
+email_correspondence:
+  - email: personal@example.org
+    humans: [julia]
+  - email: management@example.org
+    humans: [julia]
+    actors: [marco]
+```
+
+These entries are descriptive metadata only. They do not authenticate users, delegate an identity, grant access, change existing email fields, or modify Drive permissions. References must exist and correspondence addresses must be unique, ignoring case. They are part of the organization document and therefore change its policy hash. Upgrade every strict PhantomOrg reader and validate policy publication and recovery before adding this optional key to a live organization: older readers reject it. Never infer a person's identity solely from a shared account.
