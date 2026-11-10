@@ -3,7 +3,7 @@
 import argparse
 import os
 import socket
-import subprocess
+import subprocess  # nosec B404 - broker launches a privilege-dropped worker
 
 from .view_matrix_authority import guarded_matrix_authority
 from .view_matrix_broker import serve
@@ -80,7 +80,7 @@ def serve_configured(connection, config):
             "PYTHONPATH": config["pythonpath"],
         }
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 - protected config, no shell, dropped UID
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
