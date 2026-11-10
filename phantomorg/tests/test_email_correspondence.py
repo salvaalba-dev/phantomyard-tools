@@ -17,8 +17,11 @@ def document():
     doc = yaml.safe_load(ORG.read_text(encoding="utf-8"))
     doc["email_correspondence"] = [
         {"email": "personal@example.org", "humans": [doc["humans"][0]["id"]]},
-        {"email": "shared@example.org", "humans": [doc["humans"][0]["id"]],
-         "actors": [doc["actors"][0]["id"]]},
+        {
+            "email": "shared@example.org",
+            "humans": [doc["humans"][0]["id"]],
+            "actors": [doc["actors"][0]["id"]],
+        },
     ]
     return doc
 
@@ -37,15 +40,18 @@ def test_schema_accepts_correspondence(document):
     jsonschema.validate(document, schema)
 
 
-@pytest.mark.parametrize("entry", [
-    {"email": "bad", "humans": ["mar"]},
-    {"email": "valid@example.org"},
-    {"email": "valid@example.org", "humans": ["unknown"]},
-    {"email": "valid@example.org", "actors": ["unknown"]},
-    {"email": "valid@example.org", "humans": ["mar", "mar"]},
-    {"email": "valid@example.org", "actors": "marco"},
-    {"email": "valid@example.org", "humans": ["mar"], "grant": True},
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"email": "bad", "humans": ["mar"]},
+        {"email": "valid@example.org"},
+        {"email": "valid@example.org", "humans": ["unknown"]},
+        {"email": "valid@example.org", "actors": ["unknown"]},
+        {"email": "valid@example.org", "humans": ["mar", "mar"]},
+        {"email": "valid@example.org", "actors": "marco"},
+        {"email": "valid@example.org", "humans": ["mar"], "grant": True},
+    ],
+)
 def test_invalid_entries_fail_closed(document, entry):
     document["email_correspondence"] = [entry]
     with pytest.raises(ShapeError):
