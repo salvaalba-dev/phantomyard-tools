@@ -46,7 +46,9 @@ as the actual viewer account and as the agent account before activation.
 
 Compose a copy of the currently supported viewer release, not the live tree.
 From the installed package, call `view_matrix_http_patch.patch_http` on the
-copy's `scoped_http.py` and `view_matrix_ui_patch.patch_ui` on its `app.js`.
+copy's `scoped_http.py` and `view_matrix_ui_patch.patch_scoped_ui` on its
+`scoped-ui.js` when using the identified scoped viewer. The separate `patch_ui`
+targets the older `app.js` frontend and does not modify the scoped frontend.
 Write each result only into the copy. Both functions reject an unexpected
 source digest: a newer viewer must be reviewed and supported explicitly, not
 patched by bypassing the digest. Record the input and output hashes. Verify the
