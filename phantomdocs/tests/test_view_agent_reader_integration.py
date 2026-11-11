@@ -47,9 +47,7 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
         ] = "@example_bot"
         return org
 
-    monkeypatch.setattr(
-        fixture, "scoped_organization", organization_with_channel
-    )
+    monkeypatch.setattr(fixture, "scoped_organization", organization_with_channel)
     case = fixture.PublishedReaderTests()
     case.setUp()
     try:
@@ -131,9 +129,7 @@ def test_configured_agent_and_existing_human_routes_coexist(monkeypatch, tmp_pat
         ] = "@example_bot"
         return org
 
-    monkeypatch.setattr(
-        fixture, "scoped_organization", organization_with_channel
-    )
+    monkeypatch.setattr(fixture, "scoped_organization", organization_with_channel)
     case = fixture.PublishedReaderTests()
     case.setUp()
     try:
