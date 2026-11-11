@@ -9,12 +9,31 @@ including persona conversation and review, must remain disabled for them.
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 
 from phantomdocs.access import validate_org_schema
+from phantomdocs.signing import npub_to_pubkey_hex
 from phantomdocs.view_agent_scope import permits_view
 
 ACTOR_SCOPE = "agent-all"
+
+
+def has_declared_channel(actor):
+    """Check channel declarations, without treating them as authentication."""
+    if not isinstance(actor, dict):
+        return False
+    telegram = actor.get("telegram_bot")
+    nostr = actor.get("npub")
+    if isinstance(telegram, str) and re.fullmatch(r"@[A-Za-z0-9_]{5,32}", telegram):
+        return True
+    if not isinstance(nostr, str):
+        return False
+    try:
+        npub_to_pubkey_hex(nostr)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -94,6 +113,14 @@ class AgentDirectory:
                     isinstance(row, dict) and row.get("id") == actor for row in actors
                 )
                 != 1
+            ):
+                return False
+            if not has_declared_channel(
+                next(
+                    row
+                    for row in actors
+                    if isinstance(row, dict) and row.get("id") == actor
+                )
             ):
                 return False
             if scope_id == ACTOR_SCOPE:

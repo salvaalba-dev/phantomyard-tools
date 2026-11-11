@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from phantomdocs.signing import npub_encode
 from phantomdocs.view_agent_directory import ACTOR_SCOPE, AgentDirectory
 
 
@@ -25,7 +26,14 @@ def org():
     return {
         "version": 1,
         "organization": {"id": "example"},
-        "actors": [{"id": "agent", "role": "lead", "actor_exceptions": []}],
+        "actors": [
+            {
+                "id": "agent",
+                "role": "lead",
+                "actor_exceptions": [],
+                "telegram_bot": "@example_bot",
+            }
+        ],
         "roles": [{"id": "lead", "access_level": "basic", "security_exceptions": []}],
         "policies": {
             "access_levels": {"basic": {"categories": ["category-4"]}},
@@ -138,7 +146,14 @@ def test_scope_and_policy_revocations_invalidate_sessions(org):
 
 
 def test_multiple_agents_use_same_rules_with_disjoint_scopes(org):
-    org["actors"].append({"id": "other", "role": "lead", "actor_exceptions": []})
+    org["actors"].append(
+        {
+            "id": "other",
+            "role": "lead",
+            "actor_exceptions": [],
+            "npub": npub_encode("11" * 32),
+        }
+    )
     view = org["policies"]["phantomview"]
     view["scope_definitions"]["hill"] = {"kind": "project"}
     view["persona_scope_grants"]["other"] = ["hill"]
@@ -154,3 +169,20 @@ def test_multiple_agents_use_same_rules_with_disjoint_scopes(org):
         directory.resolve_agent("agent", "hill")
     with pytest.raises(ValueError):
         directory.resolve_agent("other", "river")
+
+
+def test_independent_channels_and_removal_revoke_agent_sessions(org):
+    org["actors"][0]["npub"] = npub_encode("11" * 32)
+    both = AgentDirectory(org, HumanDirectory(), frozenset({"agent"}))
+    old = both.resolve_agent("agent", ACTOR_SCOPE)
+    nostr_only = copy.deepcopy(org)
+    nostr_only["actors"][0].pop("telegram_bot")
+    nostr = AgentDirectory(nostr_only, HumanDirectory(), frozenset({"agent"}))
+    with pytest.raises(ValueError):
+        nostr.validate(old)
+    nostr.resolve_agent("agent", ACTOR_SCOPE)
+    nostr_only["actors"][0]["npub"] = "invalid"
+    denied = AgentDirectory(nostr_only, HumanDirectory(), frozenset({"agent"}))
+    with pytest.raises(ValueError):
+        denied.resolve_agent("agent", ACTOR_SCOPE)
+    assert denied.permits("human", "allowed")
