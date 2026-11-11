@@ -79,3 +79,26 @@ def test_rejects_other_organization_and_duplicate_ids():
     args[1]["resources"].append(copy.deepcopy(args[1]["resources"][0]))
     with pytest.raises(ValueError):
         revalidate_catalog(*args)
+
+
+def test_changed_category_scope_does_not_expand_access():
+    bundle, draft, policy, categories, revision, org = inputs()
+    resource = bundle["catalog"]["resources"][0]
+    resource.update(
+        {
+            "category": "category-1",
+            "scope": {"id": "example", "kind": "organization"},
+            "project": None,
+        }
+    )
+    draft["resources"][0].update(
+        {"category": "category-1", "scope": resource["scope"], "project": None}
+    )
+    policy["scope_definitions"]["example"] = {"kind": "organization"}
+    categories["category-1"] = {"scope": "project"}
+    assert (
+        revalidate_catalog(bundle, draft, policy, categories, revision, org)[
+            "resources"
+        ]
+        == []
+    )

@@ -89,6 +89,18 @@ def revalidate_catalog(
             "kind"
         ):
             continue
+        category_definition = categories.get(category)
+        if not isinstance(category_definition, dict):
+            continue
+        category_scope = category_definition.get("scope")
+        if category_scope not in (None, "project"):
+            continue
+        if scope.get("kind") == "project" and row.get("project") != scope.get("id"):
+            continue
+        if category_scope == "project" and (
+            scope.get("kind") != "project" or row.get("project") != scope.get("id")
+        ):
+            continue
         if category.startswith("category-4") and row.get("project") is None:
             continue
         if any(
