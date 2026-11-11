@@ -39,8 +39,16 @@ def test_reader_agent_session_filters_and_revokes(monkeypatch, tmp_path):
     candidate.PublishedReader = ConfiguredReader
     monkeypatch.setattr(fixture, "reader", candidate)
     original = fixture.scoped_organization
+
+    def organization_with_channel():
+        org = original() | {"version": 1}
+        next(actor for actor in org["actors"] if actor["id"] == "administrator")[
+            "telegram_bot"
+        ] = "@example_bot"
+        return org
+
     monkeypatch.setattr(
-        fixture, "scoped_organization", lambda: original() | {"version": 1}
+        fixture, "scoped_organization", organization_with_channel
     )
     case = fixture.PublishedReaderTests()
     case.setUp()

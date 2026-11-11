@@ -32,8 +32,16 @@ def test_human_and_agent_signers_share_route_without_impersonation(
     spec.loader.exec_module(candidate)
     monkeypatch.setattr(fixture, "reader", candidate)
     original = fixture.scoped_organization
+
+    def organization_with_channel():
+        org = original() | {"version": 1}
+        next(actor for actor in org["actors"] if actor["id"] == "administrator")[
+            "telegram_bot"
+        ] = "@example_bot"
+        return org
+
     monkeypatch.setattr(
-        fixture, "scoped_organization", lambda: original() | {"version": 1}
+        fixture, "scoped_organization", organization_with_channel
     )
     case = fixture.PublishedReaderTests()
     case.setUp()
