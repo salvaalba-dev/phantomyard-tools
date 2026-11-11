@@ -40,9 +40,7 @@ def test_human_and_agent_signers_share_route_without_impersonation(
         ] = "@example_bot"
         return org
 
-    monkeypatch.setattr(
-        fixture, "scoped_organization", organization_with_channel
-    )
+    monkeypatch.setattr(fixture, "scoped_organization", organization_with_channel)
     case = fixture.PublishedReaderTests()
     case.setUp()
     try:
