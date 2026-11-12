@@ -85,6 +85,12 @@ jobs:
           bash github-app-auth/tests/test_clone_wrapper.sh
           bash github-app-auth/tests/test_gh_wrapper.sh
 
+      # Keep the cryptographic dependency toolchain independent of runner defaults.
+      - name: Set up Python for PhantomDocs
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
       - name: Lint (phantomdocs)
         working-directory: phantomdocs
         run: |
@@ -158,7 +164,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Smoke test — packaged install must build an org end to end
+      - name: Smoke test â€” packaged install must build an org end to end
         run: |
           cd /tmp
           po new-org --id smoke --name "Smoke Org" --sector ngo --lang en --template ngo
@@ -201,7 +207,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Smoke test — packaged install must derive + validate a manifest
+      - name: Smoke test â€” packaged install must derive + validate a manifest
         run: |
           cd /tmp
           pm derive-manifest \
