@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from phantomdocs.view_agent_directory import has_declared_channel
 from phantomdocs.view_agent_guarded_launch import http_ready
+from phantomdocs.view_agent_onboarding import onboarding_report, runtime_directories
 from phantomdocs.view_agent_public_probe import query_public_identity
 from phantomdocs.view_agent_reconcile import compose_plan, plan_routes
 from phantomdocs.view_agent_recovery import ViewerStopFailed
@@ -145,7 +146,9 @@ def validate_reader(candidate, settings):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--settings", required=True)
-    parser.add_argument("--apply", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--check-onboarding", action="store_true")
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.exit(1, "A root-managed supervisor is required\n")
@@ -208,6 +211,16 @@ def main():
                 org_bytes, _revision = host.authority()
                 candidate = build(org_bytes)
                 host.validate(candidate)
+                if args.check_onboarding:
+                    report = onboarding_report(
+                        parse_policy(org_bytes),
+                        read_json(settings["inventory"]),
+                        json.loads(candidate),
+                        settings["supplementary_groups"],
+                        runtime_directories(settings["unit"]),
+                    )
+                    print(json.dumps(report))
+                    return 0 if report["ready"] else 1
             status = "candidate-schema-valid"
         print(json.dumps({"status": status}))
         return 0
