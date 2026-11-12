@@ -164,7 +164,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Smoke test â€” packaged install must build an org end to end
+      - name: Smoke test — packaged install must build an org end to end
         run: |
           cd /tmp
           po new-org --id smoke --name "Smoke Org" --sector ngo --lang en --template ngo
@@ -207,7 +207,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Smoke test â€” packaged install must derive + validate a manifest
+      - name: Smoke test — packaged install must derive + validate a manifest
         run: |
           cd /tmp
           pm derive-manifest \
