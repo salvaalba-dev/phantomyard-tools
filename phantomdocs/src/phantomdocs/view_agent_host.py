@@ -16,6 +16,7 @@ from phantomdocs.view_agent_directory import has_declared_channel
 from phantomdocs.view_agent_guarded_launch import http_ready
 from phantomdocs.view_agent_public_probe import query_public_identity
 from phantomdocs.view_agent_reconcile import compose_plan, plan_routes
+from phantomdocs.view_agent_recovery import ViewerStopFailed
 from phantomdocs.view_agent_supervisor import reconcile_once
 from phantomdocs.view_agent_systemd import SystemdRouteHost
 from phantomdocs.workflow_admission_config import _read_protected, _unique, parse_policy
@@ -174,8 +175,7 @@ def main():
         or any(type(g) is not int or g <= 0 for g in settings["supplementary_groups"])
     ):
         parser.exit(1, "Invalid protected supervisor settings\n")
-    baseline = read_json(settings["baseline"])
-    port = baseline["port"]
+    port = None
     host = SystemdRouteHost(
         **{key: settings[key] for key in fields},
         validate=lambda data: validate_reader(data, settings),
@@ -183,9 +183,17 @@ def main():
     )
 
     def build(org_bytes):
+        nonlocal port
+        # Read once under the transaction lock and its fail-closed handler.
+        baseline = read_json(settings["baseline"])
+        if not isinstance(baseline, dict):
+            raise TypeError("Invalid protected viewer baseline")
+        port = baseline.get("port")
+        if type(port) is not int or not 1024 <= port <= 65535:
+            raise ValueError("Bounded viewer health port required")
         return build_candidate(
             org_bytes,
-            read_json(settings["baseline"]),
+            baseline,
             read_json(settings["inventory"]),
             lambda account, persona: query_public_identity(
                 account, persona, settings["runtime"]
@@ -203,6 +211,13 @@ def main():
             status = "candidate-schema-valid"
         print(json.dumps({"status": status}))
         return 0
+    except ViewerStopFailed:
+        print(
+            json.dumps(
+                {"status": "viewer-stop-failed", "manual_intervention_required": True}
+            )
+        )
+        return 1
     except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError):
         # Deliberately omit configuration, identity values and exception text.
         print(json.dumps({"status": "reconciliation-refused"}))

@@ -62,6 +62,18 @@ recovery. Keep the service stopped while resolving these cases; restarting an
 older configuration can restore a revoked grant. The timer retries failed runs
 and periodically verifies unchanged bindings.
 
+After validating the protected installation settings and selecting the target
+unit, the CLI loads the baseline once inside the locked candidate builder.
+Missing, unreadable, unsafe or malformed baseline data and invalid health ports
+therefore enter the same fail-closed stop path as an identity-query failure.
+The candidate and readiness check use that same baseline snapshot. A schema-only
+invocation reports failure without stopping an existing viewer. If the host
+cannot stop the viewer, the apply command exits unsuccessfully with the redacted
+status `viewer-stop-failed` and `manual_intervention_required: true`; it does not
+claim shutdown succeeded. Repairing the baseline allows the next apply to build
+and validate a fresh candidate before restarting the viewer. Invalid installation
+settings that prevent selection of a trusted target unit require operator repair.
+
 The optional root/systemd integration test creates a disposable unit and a real
 reader with isolated sockets, port and audit database. It exercises health
 failure, journal recovery, restart, SIGKILL and stale-authority startup refusal.
