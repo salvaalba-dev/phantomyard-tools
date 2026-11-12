@@ -10,6 +10,10 @@ class RecoveryRequired(RuntimeError):
     """The viewer is stopped and the pending transaction needs recovery."""
 
 
+class ViewerStopFailed(RecoveryRequired):
+    """The host could not confirm viewer shutdown; an operator must intervene."""
+
+
 def apply_route_change(host, candidate, authority_revision):
     """Install a validated candidate while holding the host's authority lock.
 
@@ -83,7 +87,7 @@ def _stop_or_raise(host):
     try:
         host.stop()
     except Exception as exc:
-        raise RecoveryRequired(
+        raise ViewerStopFailed(
             "Viewer stop failed; manual intervention required"
         ) from exc
 
