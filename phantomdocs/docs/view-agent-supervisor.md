@@ -1,5 +1,8 @@
 # Provisioned agent route supervisor
 
+For account preparation, read-only onboarding diagnostics and recovery decisions,
+see [Viewer operations](VIEW-OPERATIONS.md).
+
 The supervisor reconciles an explicitly provisioned Unix-account inventory with
 the current PhantomOrg document. It adds and withdraws viewer routes for those
 accounts, independently queries each account's public runtime identity, and

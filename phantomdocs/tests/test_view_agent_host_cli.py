@@ -84,9 +84,12 @@ def cli(monkeypatch):
         state.health_ports.append(port)
         return True
 
-    def run(*, apply=True):
+    def run(*, apply=True, onboarding=False):
         arguments = ["supervisor", "--settings", "/etc/example/settings.json"]
-        monkeypatch.setattr(sys, "argv", arguments + (["--apply"] if apply else []))
+        options = (
+            ["--check-onboarding"] if onboarding else (["--apply"] if apply else [])
+        )
+        monkeypatch.setattr(sys, "argv", arguments + options)
         return module.main()
 
     monkeypatch.setattr(module.os, "geteuid", lambda: 0, raising=False)
@@ -99,6 +102,32 @@ def cli(monkeypatch):
     )
     state.run = run
     return state
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_onboarding_diagnostic_holds_lock_without_changing_viewer(
+    cli, monkeypatch, capsys, ready
+):
+    cli.candidate = b'{"agent_actors": []}'
+    monkeypatch.setattr(module, "parse_policy", lambda _: {"actors": []})
+
+    def directories(unit):
+        assert cli.host.locked and unit == "example-reader.service"
+        return set()
+
+    monkeypatch.setattr(module, "runtime_directories", directories)
+    monkeypatch.setattr(module, "onboarding_report", lambda *_: {"ready": ready})
+    assert cli.run(onboarding=True) == (0 if ready else 1)
+    assert json.loads(capsys.readouterr().out) == {"ready": ready}
+    assert cli.host.running and cli.host.stops == 0
+    assert not cli.host.pending() and not cli.health_ports
+
+
+def test_onboarding_probe_failure_preserves_running_viewer(cli, capsys):
+    cli.baseline = PermissionError("private installation data")
+    assert cli.run(onboarding=True) == 1
+    assert cli.host.running and cli.host.stops == 0
+    assert "private" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
