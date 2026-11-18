@@ -1,5 +1,8 @@
 # Local workflow peers and policy coordination
 
+See the [organization-policy lifecycle](ORGANIZATION-POLICY-LIFECYCLE.md) for
+authority boundaries, the source writer inventory and remaining integration gaps.
+
 These building blocks let a supervised local service associate a Unix socket
 peer with an actor declared by the administrator and pass the actor to the
 existing PhantomOrg authorization checks. They do not authenticate a remote
@@ -50,7 +53,8 @@ an invalid candidate, or a backup that is not an independent copy of the old
 source. It preserves the files' permissions and extended attributes.
 
 Before changing either policy the publisher creates a durable `.pending` marker
-beside the lock. Updated shared-lock readers refuse access while it exists. If
+beside the lock. Shared-lock readers and ordinary exclusive writers refuse access
+while it exists; only explicit exclusive recovery may bypass the marker. If
 publication is interrupted, use the `recover` subcommand with source,
 destination and lock to synchronize the authoritative source, then clear the
 marker; recovery checks the recorded paths and known old/new policy digests.

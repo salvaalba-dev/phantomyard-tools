@@ -15,7 +15,10 @@ class PolicyRecoveryRequired(ValueError):
 
 
 @contextmanager
-def policy_guard(lock_path, *, exclusive):
+def policy_guard(lock_path, *, exclusive, recovering=False):
+    """Serialize policy use; only explicit exclusive recovery may bypass pending."""
+    if recovering and not exclusive:
+        raise ValueError("policy recovery requires an exclusive lock")
     import fcntl
 
     # Never create or replace the lock: that can split the lock domain. Each
@@ -50,7 +53,7 @@ def policy_guard(lock_path, *, exclusive):
                 raise ValueError("policy lock is not protected")
             fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
-                if not exclusive:
+                if not recovering:
                     try:
                         os.stat(
                             path.name + ".pending",
