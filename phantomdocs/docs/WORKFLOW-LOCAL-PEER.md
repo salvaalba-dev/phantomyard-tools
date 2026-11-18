@@ -30,6 +30,10 @@ file and all parents must already exist and be protected. Synchronization fails
 on unsafe paths, changed input, unsupported schema or inability to preserve
 attributes.
 
+Use the [single publisher with multiple destinations](POLICY-FANOUT.md) for
+normal reconciliation. Standalone synchronization and `sync-org.sh` are
+break-glass operations, not additional scheduled publishers.
+
 **All policy writers must cooperate with the same lock**, including writers of
 the source policy. This is an operational prerequisite: root can bypass the
 lock, and an old or manual writer that does not use it can race the service.

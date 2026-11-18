@@ -7,15 +7,28 @@ from phantomdocs import workflow_bridge_policy as module
 
 @pytest.fixture
 def harness(monkeypatch):
-    files = {"source": b"new", "dest": b"old"}
+    files = {"/source": b"new", "/dest": b"old"}
     actions = []
     monkeypatch.setattr(module, "policy_guard", lambda *a, **k: nullcontext())
-    monkeypatch.setattr(module.os.path, "lexists", lambda _: False)
+    journal = {"record": None}
+    monkeypatch.setattr(module.fanout, "ensure_independent", lambda paths: None)
+    permissions = {"uid": 0, "gid": 0, "mode": 0o640, "xattrs": {}}
+    monkeypatch.setattr(module, "policy_permissions", lambda path: permissions)
+    monkeypatch.setattr(module.fanout, "policy_permissions", lambda path: permissions)
+    monkeypatch.setattr(module.fanout, "read_pending", lambda path: journal["record"])
+    monkeypatch.setattr(
+        module.fanout,
+        "create_pending",
+        lambda path, record: journal.update(record=record),
+    )
+    monkeypatch.setattr(
+        module.fanout, "clear_pending", lambda path, record: journal.update(record=None)
+    )
     monkeypatch.setattr(module, "_read_policy", lambda path: files[path])
     monkeypatch.setattr(module, "parse_policy", lambda _: {})
     monkeypatch.setattr(module, "_derive_both", lambda *a, **k: ({"x": 1}, {"x": 0}))
 
-    def sync(src, dst, *, expected_source, expected_destination):
+    def sync(src, dst, *, expected_source, expected_destination, expected_permissions):
         assert files[src] == expected_source and files[dst] == expected_destination
         files[dst] = files[src]
         actions.append("sync")
@@ -32,9 +45,9 @@ def harness(monkeypatch):
 
 def run_refresh(**kw):
     return module.refresh(
-        source="source",
-        destination="dest",
-        lock_path="lock",
+        source="/source",
+        destination="/dest",
+        lock_path="/lock",
         node="node",
         resolver="resolver",
         unit="bridge.service",
@@ -45,7 +58,7 @@ def run_refresh(**kw):
 def test_changed_policy_stops_syncs_then_starts(harness):
     files, actions = harness
     assert run_refresh() == "restarted"
-    assert files["dest"] == b"new"
+    assert files["/dest"] == b"new"
     assert actions == ["is-active", "stop", "sync", "start"]
 
 
@@ -66,7 +79,9 @@ def test_prestart_never_controls_service(harness):
 def test_failures_leave_active_bridge_stopped(harness, monkeypatch, failure):
     _, actions = harness
     if failure == "pending":
-        monkeypatch.setattr(module.os.path, "lexists", lambda _: True)
+        monkeypatch.setattr(
+            module.fanout, "read_pending", lambda _: {"kind": "foreign"}
+        )
     elif failure == "invalid":
 
         def fail(*args, **kwargs):
@@ -79,7 +94,7 @@ def test_failures_leave_active_bridge_stopped(harness, monkeypatch, failure):
             raise module.BridgeRefreshError("sync failed")
 
         monkeypatch.setattr(module, "_synchronize_locked", fail)
-    with pytest.raises(module.BridgeRefreshError):
+    with pytest.raises((module.BridgeRefreshError, ValueError)):
         run_refresh()
     assert actions.count("stop") == 1
     assert "start" not in actions
@@ -87,7 +102,7 @@ def test_failures_leave_active_bridge_stopped(harness, monkeypatch, failure):
 
 def test_identical_policy_does_not_restart_or_write(harness, monkeypatch):
     files, actions = harness
-    files["dest"] = files["source"]
+    files["/dest"] = files["/source"]
     monkeypatch.setattr(module, "_derive_both", lambda *a, **k: ({"x": 1}, {"x": 1}))
     assert run_refresh() == "synchronized"
     assert actions == ["is-active"]
@@ -174,6 +189,7 @@ def test_linux_real_lock_sync_and_resolver(monkeypatch):
         source.write_text(template.format(npub_encode("11" * 32)))
         dest.write_text(template.format(npub_encode("22" * 32)))
         lock.touch(mode=0o600)
+        Path(str(lock) + ".publisher").touch(mode=0o600)
         actions = []
         monkeypatch.setattr(
             module, "_systemctl", lambda action, unit: actions.append(action) or True

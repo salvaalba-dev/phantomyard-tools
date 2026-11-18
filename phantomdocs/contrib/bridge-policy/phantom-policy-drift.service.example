@@ -1,0 +1,7 @@
+[Unit]
+Description=Report organization policy copy drift without repairing it
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/phantomdocs/bridge-policy/venv/bin/python -m phantomdocs.workflow_policy_watchdog --source /srv/example-policy/source.yaml --destination /srv/example-policy/bridge.yaml --destination /srv/example-policy/docs.yaml --policy-lock /etc/phantomdocs/policy.lock

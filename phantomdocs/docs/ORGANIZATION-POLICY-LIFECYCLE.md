@@ -7,6 +7,11 @@ publication path. Organization-policy lifecycle remains the first queue item.
 
 ## Authority and publication boundary
 
+The [fanout publication candidate](POLICY-FANOUT.md) extends the bridge publisher
+to multiple destinations, durable matching-record retry, per-destination metadata
+preservation and a separate read-only drift watchdog. It does not generate or
+approve the source or establish complete installation acceptance.
+
 The intended authority is a complete, validated PhantomOrg `org.yaml` snapshot
 for one explicitly selected organization. PhantomOrg owns its meaning; neither
 PhantomDocs nor the viewer may invent grants or reconstruct policy from document
@@ -47,7 +52,7 @@ an existing authenticated, scoped boundary.
 | PhantomDocs `workflow_policy_publish.publish` | Exclusive protected policy lock, expected-old digest, independent backup and durable pending marker | Reviewed source and one consumer-copy publication. Does not generate policy or discover writers. |
 | PhantomDocs `workflow_policy_publish.recover` | Explicit exclusive recovery; checks marker paths and allowed digest states | Only recovery may enter the lock while a publication is pending. |
 | PhantomDocs `workflow_policy_sync.synchronize` | Exclusive protected policy lock and permission-preserving replacement | Normal synchronization must refuse pending publication. It does not verify a publication receipt or establish upstream freshness. |
-| PhantomDocs `workflow_bridge_policy.refresh` | Exclusive policy lock, pending check and bridge reconciliation | Derived snapshot only; its watcher is eventual and is not synchronous revocation across consumers. |
+| PhantomDocs `workflow_bridge_policy.refresh` | Exclusive common policy lock, multiple copies, pinned permissions and matching-record retry; separate publisher lock across restart | Normal distribution entry point; its watcher remains eventual and is not synchronous revocation across consumers. |
 | Operator editors, restore commands, copy jobs, timers and external generators | Not established by this repository | Inventory privately; migrate to the publication path or exclude them from the live paths before acceptance. |
 
 The lock does not stop a writer that never acquires it. A protected live source

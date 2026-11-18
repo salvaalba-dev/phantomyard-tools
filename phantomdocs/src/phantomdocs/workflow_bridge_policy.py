@@ -5,10 +5,17 @@ import json
 import os
 import re
 import subprocess  # nosec B404 -- fixed commands with validated arguments
+from contextlib import nullcontext
 
+from . import workflow_policy_fanout as fanout
 from .workflow_admission_config import parse_policy
 from .workflow_policy_guard import policy_guard
-from .workflow_policy_sync import MAX_BYTES, _identity, _synchronize_locked
+from .workflow_policy_sync import (
+    MAX_BYTES,
+    _identity,
+    _synchronize_locked,
+    policy_permissions,
+)
 from .workflow_protected_paths import open_protected_file, protected_parent
 
 
@@ -27,6 +34,8 @@ def _read_policy(path):
                 not data
                 or len(data) > MAX_BYTES
                 or _identity(os.fstat(fd)) != _identity(before)
+                or _identity(os.stat(name, dir_fd=directory, follow_symlinks=False))
+                != _identity(before)
             ):
                 raise BridgeRefreshError("policy changed while reading")
             return data
@@ -102,54 +111,127 @@ def _systemctl(action, unit):
 
 
 def refresh(*, source, destination, lock_path, node, resolver, unit, prestart=False):
-    """Sync snapshot and restart for effective changes; watcher is eventual.
+    """Publish all snapshots under one policy lock; retry only our own journal.
 
-    The service must start from this protected snapshot and no other writer may
-    alter it. Root edits can bypass the lock and cannot be made atomic here.
+    A separate pre-existing publisher lock serializes service orchestration.
+    Prestart skips that outer lock to avoid a systemd dependency deadlock; it
+    still holds the common policy lock for every destination and verification.
     """
-    try:
-        was_active = False if prestart else _systemctl("is-active", unit)
-    except Exception:
-        if not prestart:
-            _systemctl("stop", unit)
-        raise
-    stopped = False
-    try:
-        with policy_guard(lock_path, exclusive=True):
-            if os.path.lexists(lock_path + ".pending"):
-                raise BridgeRefreshError("policy publication requires recovery")
-            before = _read_policy(source)
-            parse_policy(before)
-            old = _read_policy(destination)
-            current, previous = _derive_both(
-                before, before if prestart else old, node=node, resolver=resolver
-            )
-            changed = current != previous
-            if changed and was_active:
-                _systemctl("stop", unit)
-                stopped = True
-            if before != old:
-                _synchronize_locked(
-                    source,
-                    destination,
-                    expected_source=before,
-                    expected_destination=old,
+    paths = fanout.destinations(source, destination, lock_path)
+    serial = (
+        nullcontext()
+        if prestart
+        else policy_guard(lock_path + ".publisher", exclusive=True)
+    )
+    with serial:
+        active = False
+        stopped = False
+        published = False
+        try:
+            active = False if prestart else _systemctl("is-active", unit)
+            # Recovery is confined to the strictly validated fanout record.
+            # A marker from manual source publication is never adopted here.
+            with policy_guard(lock_path, exclusive=True, recovering=True):
+                record = fanout.read_pending(lock_path)
+                inherited = record is not None
+                fanout.ensure_independent(
+                    [source, lock_path, lock_path + ".publisher", *paths]
                 )
-            if _read_policy(source) != before or _read_policy(destination) != before:
-                raise BridgeRefreshError("policy changed during refresh")
-    except Exception:
-        if was_active and not stopped:
-            _systemctl("stop", unit)
-        raise
-    if stopped:
-        _systemctl("start", unit)
-    return "restarted" if stopped else "synchronized"
+                before = _read_policy(source)
+                parse_policy(before)
+                old = [_read_policy(path) for path in paths]
+                current, previous = _derive_both(
+                    before, before if prestart else old[0], node=node, resolver=resolver
+                )
+                changed = current != previous
+                if record is None:
+                    if all(data == before for data in old):
+                        return "synchronized"
+                    record = fanout.make_record(
+                        source=source,
+                        paths=paths,
+                        payload=before,
+                        old=old,
+                        unit=unit,
+                        resolver=resolver,
+                        node=node,
+                        active=active,
+                        changed=changed,
+                    )
+                    fanout.create_pending(lock_path, record)
+                fanout.verify_record(
+                    record,
+                    source=source,
+                    paths=paths,
+                    payload=before,
+                    old=old,
+                    unit=unit,
+                    resolver=resolver,
+                    node=node,
+                )
+                if record["restart"] and active and not prestart:
+                    _systemctl("stop", unit)
+                    stopped = True
+                for path, data, entry in zip(
+                    paths, old, record["destinations"], strict=True
+                ):
+                    if data != before:
+                        _synchronize_locked(
+                            source,
+                            path,
+                            expected_source=before,
+                            expected_destination=data,
+                            expected_permissions=entry["permissions"],
+                        )
+                _verify_copies(source, paths, before, record)
+                restart = (
+                    not prestart
+                    and record["resume"]
+                    and (record["restart"] or not active)
+                )
+                if not restart:
+                    # A nested bridge ExecStartPre must not erase the outer
+                    # publisher's restart intent before systemctl start returns.
+                    if not (prestart and inherited):
+                        published = True
+                        fanout.clear_pending(lock_path, record)
+                    return "synchronized"
+            # Never start a unit while holding the lock its ExecStartPre needs.
+            # Keep pending durable until start succeeds; a failed/killed start
+            # can therefore be retried even though the bridge is now inactive.
+            stopped = False
+            _systemctl("start", unit)
+            with policy_guard(lock_path, exclusive=True, recovering=True):
+                _verify_copies(source, paths, before, record)
+                published = True
+                fanout.clear_pending(lock_path, record)
+            return "restarted"
+        except Exception:
+            if not prestart and not stopped and not published:
+                _systemctl("stop", unit)
+            raise
+
+
+def _verify_copies(source, paths, payload, record):
+    if _read_policy(source) != payload:
+        raise BridgeRefreshError("policy source changed during refresh")
+    for path, entry in zip(paths, record["destinations"], strict=True):
+        if (
+            _read_policy(path) != payload
+            or policy_permissions(path) != entry["permissions"]
+        ):
+            raise BridgeRefreshError("policy destination changed during refresh")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
-    parser.add_argument("--destination", required=True)
+    parser.add_argument(
+        "--destination",
+        required=True,
+        action="append",
+        help="Repeat for every destination; the first is the bridge snapshot",
+    )
     parser.add_argument("--policy-lock", required=True)
     parser.add_argument("--resolver", required=True)
     parser.add_argument("--node", default="/usr/bin/node")
