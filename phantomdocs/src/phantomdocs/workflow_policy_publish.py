@@ -98,7 +98,7 @@ def publish(candidate, source, destination, backup, lock_path, expected_sha256):
 
 def recover(source, destination, lock_path):
     """Complete an interrupted publication using the authoritative source."""
-    with policy_guard(lock_path, exclusive=True):  # noqa: SIM117
+    with policy_guard(lock_path, exclusive=True, recovering=True):  # noqa: SIM117
         with protected_parent(lock_path) as (directory, lock_name):
             marker = lock_name + ".pending"
             _marker(directory, marker)
