@@ -5,6 +5,7 @@ operator or an older synchronizer from changing the policy without the lock.
 """
 
 import argparse
+import base64
 import os
 import secrets
 import stat
@@ -20,6 +21,35 @@ def _identity(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _permissions(fd):
+    info = os.fstat(fd)
+    return {
+        "uid": info.st_uid,
+        "gid": info.st_gid,
+        "mode": stat.S_IMODE(info.st_mode),
+        "xattrs": {
+            key: base64.b64encode(os.getxattr(fd, key)).decode("ascii")
+            for key in os.listxattr(fd)
+        },
+    }
+
+
+def policy_permissions(path):
+    """Snapshot existing protected ownership, mode and all ACL/xattr bytes."""
+    with protected_parent(path) as (directory, name):
+        fd = open_protected_file(directory, name)
+        try:
+            before = os.fstat(fd)
+            result = _permissions(fd)
+            if _identity(os.fstat(fd)) != _identity(before) or _identity(
+                os.stat(name, dir_fd=directory, follow_symlinks=False)
+            ) != _identity(before):
+                raise ValueError("policy permissions changed while reading")
+            return result
+        finally:
+            os.close(fd)
+
+
 def synchronize(source, destination, lock_path):
     """Replace a policy under the cooperating exclusive lock."""
     with policy_guard(lock_path, exclusive=True):
@@ -27,7 +57,12 @@ def synchronize(source, destination, lock_path):
 
 
 def _synchronize_locked(
-    source, destination, *, expected_source=None, expected_destination=None
+    source,
+    destination,
+    *,
+    expected_source=None,
+    expected_destination=None,
+    expected_permissions=None,
 ):
     """Replace protected files while the caller holds the policy lock."""
     with (
@@ -58,6 +93,9 @@ def _synchronize_locked(
             parse_policy(payload)
             dst = open_protected_file(dest_dir, dest_name)
             old = os.fstat(dst)
+            permissions = _permissions(dst)
+            if expected_permissions is not None and permissions != expected_permissions:
+                raise ValueError("destination permissions changed")
             if expected_destination is not None:
                 with os.fdopen(dst, "rb", closefd=False) as file:
                     current = file.read(MAX_BYTES + 1)
@@ -83,6 +121,8 @@ def _synchronize_locked(
                 os.setxattr(tmp, key, value)
             if {key: os.getxattr(tmp, key) for key in os.listxattr(tmp)} != attrs:
                 raise ValueError("extended permissions changed")
+            if _permissions(tmp) != permissions:
+                raise ValueError("destination permissions were not preserved")
             view = memoryview(payload)
             while view:
                 written = os.write(tmp, view)
@@ -90,6 +130,8 @@ def _synchronize_locked(
                     raise OSError("short policy write")
                 view = view[written:]
             os.fsync(tmp)
+            if _permissions(tmp) != permissions:
+                raise ValueError("destination permissions changed during write")
             if (
                 _identity(os.fstat(src)) != _identity(before)
                 or _identity(

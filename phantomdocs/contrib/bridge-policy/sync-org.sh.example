@@ -1,0 +1,6 @@
+#!/bin/sh
+# BREAK GLASS ONLY. Disable conflicting orchestration and review the source,
+# destination, permissions and consumer lifecycle first. Never schedule this
+# script as a normal writer. It refuses an interrupted publication marker and
+# does not clear it, restart the bridge, or reconcile other destinations.
+exec /opt/phantomdocs/bridge-policy/venv/bin/python -m phantomdocs.workflow_policy_sync --source /srv/example-policy/source.yaml --destination /srv/example-policy/docs.yaml --policy-lock /etc/phantomdocs/policy.lock

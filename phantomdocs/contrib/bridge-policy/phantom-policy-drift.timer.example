@@ -1,0 +1,10 @@
+[Unit]
+Description=Check organization policy copies independently of publication
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+Unit=phantom-policy-drift.service
+
+[Install]
+WantedBy=timers.target

@@ -2,7 +2,7 @@
 Description=Watch PhantomOrg policy for bridge changes
 
 [Path]
-PathChanged=/root/proyeccion/org-live.yaml
+PathChanged=/srv/example-policy/source.yaml
 Unit=phantombridge-policy-refresh.service
 
 [Install]
