@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -2195,6 +2196,38 @@ def update_cmd(check, force, repo_override):
     repo to check.
     """
     raise SystemExit(run_updater(check=check, force=force, repo_override=repo_override))
+
+
+@main.command("publish-policy")
+@click.option("--candidate", required=True, type=click.Path(dir_okay=False))
+@click.option("--source", required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--destination", required=True, multiple=True, type=click.Path(dir_okay=False)
+)
+@click.option("--policy-lock", "lock_path", required=True)
+@click.option("--expected-source-sha256", required=True)
+@click.option("--candidate-sha256", required=True)
+@click.option("--organization", required=True)
+@click.option("--resolver", required=True)
+@click.option("--node", default="/usr/bin/node", show_default=True)
+@click.option("--unit", required=True)
+def publish_policy_cmd(**options):
+    """Publish a reviewed model through the protected PhantomDocs transaction.
+
+    Requires both matching packages in the publisher environment. This command
+    never discovers, compiles or deploys personas; root-controlled installation
+    paths and the existing common locks define the publication boundary.
+    """
+    try:
+        refresh = import_module("phantomdocs.workflow_bridge_policy").refresh
+    except ImportError:
+        raise click.ClickException(
+            "Install matching PhantomDocs publication support"
+        ) from None
+    try:
+        click.echo(refresh(**options))
+    except (OSError, ValueError, RuntimeError) as error:
+        raise click.ClickException(str(error)) from error
 
 
 if __name__ == "__main__":

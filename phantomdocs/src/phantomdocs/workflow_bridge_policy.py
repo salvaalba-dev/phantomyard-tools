@@ -7,6 +7,7 @@ import re
 import subprocess  # nosec B404 -- fixed commands with validated arguments
 from contextlib import nullcontext
 
+from . import workflow_phantomorg_candidate as source_publication
 from . import workflow_policy_fanout as fanout
 from .workflow_admission_config import parse_policy
 from .workflow_policy_guard import policy_guard
@@ -110,14 +111,34 @@ def _systemctl(action, unit):
     return True
 
 
-def refresh(*, source, destination, lock_path, node, resolver, unit, prestart=False):
+def refresh(
+    *,
+    source,
+    destination,
+    lock_path,
+    node,
+    resolver,
+    unit,
+    prestart=False,
+    candidate=None,
+    expected_source_sha256=None,
+    candidate_sha256=None,
+    organization=None,
+):
     """Publish all snapshots under one policy lock; retry only our own journal.
 
     A separate pre-existing publisher lock serializes service orchestration.
     Prestart skips that outer lock to avoid a systemd dependency deadlock; it
     still holds the common policy lock for every destination and verification.
     """
+    source_publication.review_options(
+        candidate, expected_source_sha256, candidate_sha256, organization, prestart
+    )
     paths = fanout.destinations(source, destination, lock_path)
+    if candidate is not None:
+        fanout.destinations(source, [candidate], lock_path)
+        if candidate in paths:
+            raise ValueError("candidate must be independent of every destination")
     serial = (
         nullcontext()
         if prestart
@@ -127,63 +148,119 @@ def refresh(*, source, destination, lock_path, node, resolver, unit, prestart=Fa
         active = False
         stopped = False
         published = False
+        reject_candidate = False
         try:
             active = False if prestart else _systemctl("is-active", unit)
             # Recovery is confined to the strictly validated fanout record.
-            # A marker from manual source publication is never adopted here.
+            # A marker from the legacy two-file publisher is never adopted here.
             with policy_guard(lock_path, exclusive=True, recovering=True):
                 record = fanout.read_pending(lock_path)
                 inherited = record is not None
-                fanout.ensure_independent(
-                    [source, lock_path, lock_path + ".publisher", *paths]
-                )
+                reject_candidate = candidate is not None and not inherited
+                identities = [source, lock_path, lock_path + ".publisher", *paths]
+                if candidate is not None and not inherited:
+                    identities.append(candidate)
+                fanout.ensure_independent(identities)
                 before = _read_policy(source)
                 parse_policy(before)
                 old = [_read_policy(path) for path in paths]
+                settings = {
+                    "source": source,
+                    "paths": paths,
+                    "unit": unit,
+                    "resolver": resolver,
+                    "node": node,
+                }
+                source_record = (
+                    inherited and record.get("kind") == source_publication.KIND
+                )
+                if source_record:
+                    target = source_publication.recover_payload(
+                        record,
+                        before=before,
+                        old=old,
+                        organization=organization,
+                        **settings,
+                    )
+                    if candidate is not None and (
+                        candidate_sha256 != record["source_sha256"]
+                        or expected_source_sha256 != record["source_before_sha256"]
+                    ):
+                        raise ValueError(
+                            "review does not match pending source publication"
+                        )
+                elif candidate is not None:
+                    if inherited:
+                        raise ValueError("another policy publication is pending")
+                    target = _read_policy(candidate)
+                    if fanout.digest(target) != candidate_sha256:
+                        raise ValueError("candidate differs from reviewed bytes")
+                    source_publication.validate(target, organization)
+                    source_publication.source_identity(before, organization)
+                    if (
+                        fanout.digest(before) != expected_source_sha256
+                        and before != target
+                    ):
+                        raise ValueError("reviewed source revision is stale")
+                else:
+                    target = before
+                    if organization is not None:
+                        source_publication.source_identity(before, organization)
                 current, previous = _derive_both(
-                    before, before if prestart else old[0], node=node, resolver=resolver
+                    target, target if prestart else old[0], node=node, resolver=resolver
                 )
                 changed = current != previous
                 if record is None:
-                    if all(data == before for data in old):
+                    if before == target and all(data == target for data in old):
                         return "synchronized"
-                    record = fanout.make_record(
-                        source=source,
-                        paths=paths,
-                        payload=before,
-                        old=old,
-                        unit=unit,
-                        resolver=resolver,
-                        node=node,
-                        active=active,
-                        changed=changed,
-                    )
+                    if candidate is not None:
+                        record = source_publication.make_record(
+                            payload=target,
+                            before=before,
+                            old=old,
+                            organization=organization,
+                            active=active,
+                            changed=changed,
+                            **settings,
+                        )
+                    else:
+                        record = fanout.make_record(
+                            payload=target,
+                            old=old,
+                            active=active,
+                            changed=changed,
+                            **settings,
+                        )
                     fanout.create_pending(lock_path, record)
-                fanout.verify_record(
-                    record,
-                    source=source,
-                    paths=paths,
-                    payload=before,
-                    old=old,
-                    unit=unit,
-                    resolver=resolver,
-                    node=node,
-                )
+                    reject_candidate = False
+                source_record = record.get("kind") == source_publication.KIND
+                if source_record:
+                    source_publication.recover_payload(
+                        record,
+                        before=before,
+                        old=old,
+                        organization=organization,
+                        **settings,
+                    )
+                else:
+                    fanout.verify_record(record, payload=target, old=old, **settings)
                 if record["restart"] and active and not prestart:
                     _systemctl("stop", unit)
                     stopped = True
-                for path, data, entry in zip(
-                    paths, old, record["destinations"], strict=True
-                ):
-                    if data != before:
-                        _synchronize_locked(
-                            source,
-                            path,
-                            expected_source=before,
-                            expected_destination=data,
-                            expected_permissions=entry["permissions"],
-                        )
-                _verify_copies(source, paths, before, record)
+                if source_record:
+                    with source_publication.payload_file(lock_path, target) as staged:
+                        if before != target:
+                            _synchronize_locked(
+                                staged,
+                                source,
+                                expected_source=target,
+                                expected_destination=before,
+                                expected_permissions=record["source_permissions"],
+                            )
+                        _copy_destinations(staged, paths, old, target, record)
+                else:
+                    _copy_destinations(source, paths, old, target, record)
+                _verify_copies(source, paths, target, record)
                 restart = (
                     not prestart
                     and record["resume"]
@@ -202,19 +279,36 @@ def refresh(*, source, destination, lock_path, node, resolver, unit, prestart=Fa
             stopped = False
             _systemctl("start", unit)
             with policy_guard(lock_path, exclusive=True, recovering=True):
-                _verify_copies(source, paths, before, record)
+                _verify_copies(source, paths, target, record)
                 published = True
                 fanout.clear_pending(lock_path, record)
             return "restarted"
         except Exception:
-            if not prestart and not stopped and not published:
+            if not prestart and not stopped and not published and not reject_candidate:
                 _systemctl("stop", unit)
             raise
+
+
+def _copy_destinations(source, paths, old, payload, record):
+    for path, data, entry in zip(paths, old, record["destinations"], strict=True):
+        if data != payload:
+            _synchronize_locked(
+                source,
+                path,
+                expected_source=payload,
+                expected_destination=data,
+                expected_permissions=entry["permissions"],
+            )
 
 
 def _verify_copies(source, paths, payload, record):
     if _read_policy(source) != payload:
         raise BridgeRefreshError("policy source changed during refresh")
+    if (
+        record.get("kind") == source_publication.KIND
+        and policy_permissions(source) != record["source_permissions"]
+    ):
+        raise BridgeRefreshError("source permissions changed during publication")
     for path, entry in zip(paths, record["destinations"], strict=True):
         if (
             _read_policy(path) != payload
@@ -237,6 +331,10 @@ def main():
     parser.add_argument("--node", default="/usr/bin/node")
     parser.add_argument("--unit", required=True)
     parser.add_argument("--prestart", action="store_true")
+    parser.add_argument("--candidate")
+    parser.add_argument("--expected-source-sha256")
+    parser.add_argument("--candidate-sha256")
+    parser.add_argument("--organization")
     args = parser.parse_args()
     print(
         refresh(
@@ -247,6 +345,10 @@ def main():
             resolver=args.resolver,
             unit=args.unit,
             prestart=args.prestart,
+            candidate=args.candidate,
+            expected_source_sha256=args.expected_source_sha256,
+            candidate_sha256=args.candidate_sha256,
+            organization=args.organization,
         )
     )
 

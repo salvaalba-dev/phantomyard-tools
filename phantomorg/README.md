@@ -526,6 +526,17 @@ understand arbitrary structure beyond what its patterns cover; and there
 is no locking mechanism for concurrent edits on the same `org.yaml` from
 two sessions at once.
 
+## Protected organization-policy publication
+
+Use `po publish-policy --help` for the reviewed source-publication integration.
+It validates an independent complete model and delegates source plus consumer
+copies to the existing common-lock PhantomDocs fanout. Both matching packages
+must be installed in the publisher environment. Wizard/mutation commands belong
+on working specifications; do not target live authority with their sibling lock.
+This path performs no persona compilation or deployment. See the
+[integration contract](../phantomdocs/docs/PHANTOMORG-SOURCE-PUBLICATION.md)
+for review digests, metadata preservation, recovery and installation boundaries.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

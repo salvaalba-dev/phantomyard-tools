@@ -1,0 +1,29 @@
+version: 1
+organization:
+  id: sample-org
+  name: Sample organization
+  sector: ngo
+  languages: [en]
+  default_language: en
+departments:
+  - {id: operations, name: Operations, parent: null, access_policy: basic}
+roles:
+  - id: reader
+    name: Reader
+    department: operations
+    reports_to: null
+    access_level: basic
+    functions: []
+    security_exceptions: []
+actors:
+  - {id: agent, role: reader, tools: [], actor_exceptions: [category-1]}
+policies:
+  access_levels:
+    basic: {label: Basic, categories: []}
+  security_categories:
+    category-1: {label: Public}
+escalation_matrix: []
+communication:
+  request_id_format: '{org_id}-{yyyymmdd}-{seq4}'
+  message_types: [REQUEST, INFORM]
+  max_hops: 3

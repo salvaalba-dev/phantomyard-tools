@@ -5,6 +5,11 @@ baseline: `salvaalba-dev/phantomyard-tools` at
 `16edf6798a1b7debb77555919c7e41e61c7a3448`. This does not establish an installed
 publication path. Organization-policy lifecycle remains the first queue item.
 
+Follow-up candidate: [PhantomOrg source publication](PHANTOMORG-SOURCE-PUBLICATION.md)
+integrates reviewed source replacement with the merged PR #67 fanout under the
+same lock and durable journal. The older two-file publisher below remains a
+separate recovery domain and must not be chained into that normal path.
+
 ## Authority and publication boundary
 
 The [fanout publication candidate](POLICY-FANOUT.md) extends the bridge publisher
@@ -46,6 +51,7 @@ an existing authenticated, scoped boundary.
 
 | Entry point | Current coordination | Required treatment |
 |---|---|---|
+| PhantomOrg `po publish-policy` (integration candidate) | Delegates source replacement and every destination to the PR #67 common-lock transaction | Reviewed exact-byte candidate only; matching packages and separate installation acceptance required. |
 | PhantomOrg `wizard/new_org.py:new_org` | Direct initial YAML write | Working specification only; never target live authority. |
 | PhantomOrg `wizard/mutations.py:_save` and mutation commands | Atomic save; most callers use the sibling `org.yaml.lock` mutation lock | Working specification only. This is a different lock domain from the protected policy lock. |
 | PhantomOrg `wizard/interactive.py:run_setup_wizard` | Existing-spec edits use the mutation lock; new-spec save does not | Candidate creation must complete before protected publication; atomic save alone does not coordinate consumers. |

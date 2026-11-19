@@ -45,31 +45,29 @@ class _UniqueKeyLoader(yaml.SafeLoader):
 
 
 def load_org_yaml(path: str | Path) -> OrgSpec:
-    """Loads an org.yaml and returns its typed OrgSpec.
-
-    Raises OrgSpecError for any read/parse/shape/typing problem: malformed
-    YAML, invalid UTF-8, duplicate keys, missing files, permission errors,
-    directories passed as path, recursion bombs and shape violations all
-    surface as OrgSpecError (never raw yaml/OSError exceptions).
-    """
-    path = Path(path)
+    """Load a UTF-8 model without accepting ambiguous mapping keys."""
     try:
-        with open(path, encoding="utf-8") as f:
-            # _UniqueKeyLoader extends yaml.SafeLoader, so this is safe_load
-            # semantics (no arbitrary object instantiation); bandit cannot
-            # see the inheritance, hence the inline nosec below.
-            raw = yaml.load(f, Loader=_UniqueKeyLoader)  # nosec B506
-    except (yaml.YAMLError, UnicodeDecodeError, RecursionError, OSError) as e:
-        raise OrgSpecError(f"org.yaml could not be read/parsed: {e}") from e
+        payload = Path(path).read_bytes()
+    except OSError as error:
+        raise OrgSpecError(f"org.yaml could not be read/parsed: {error}") from error
+    return load_org_bytes(payload)
 
+
+def load_org_bytes(payload: bytes) -> OrgSpec:
+    """Parse an exact UTF-8 snapshot; do not reopen a mutable candidate path."""
+    if not isinstance(payload, bytes):
+        raise TypeError("organization payload must be bytes")
+    try:
+        raw = yaml.load(payload.decode("utf-8"), Loader=_UniqueKeyLoader)  # nosec B506
+    except (yaml.YAMLError, UnicodeDecodeError, RecursionError) as error:
+        raise OrgSpecError(f"org.yaml could not be read/parsed: {error}") from error
     try:
         validate_shape(raw)
-    except ShapeError as e:
+    except ShapeError as error:
         raise OrgSpecError(
-            f"org.yaml does not conform to the expected shape: {e}"
-        ) from e
-
+            f"org.yaml does not conform to the expected shape: {error}"
+        ) from error
     try:
         return OrgSpec.from_dict(raw)
-    except Exception as exc:
-        raise OrgSpecError(f"org.yaml could not be typed: {exc}") from exc
+    except Exception as error:
+        raise OrgSpecError(f"org.yaml could not be typed: {error}") from error
