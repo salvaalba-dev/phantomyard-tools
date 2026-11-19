@@ -7,6 +7,11 @@ every destination while holding the exclusive common policy lock. Use repeated
 Every trigger must pass the same complete, ordered list. The existing single
 destination command remains supported.
 
+The [PhantomOrg source-publication integration](PHANTOMORG-SOURCE-PUBLICATION.md)
+adds a reviewed `po publish-policy` entry point that changes the live source and
+all destinations inside this same recoverable transaction. It is a local
+candidate and does not establish installation or activation.
+
 ```sh
 python -m phantomdocs.workflow_bridge_policy \
   --source /srv/example-policy/source.yaml \

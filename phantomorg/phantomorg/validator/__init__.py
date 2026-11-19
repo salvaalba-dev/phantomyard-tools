@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..spec.loader import OrgSpecError, load_org_yaml
+from ..spec.loader import OrgSpecError as OrgSpecError
+from ..spec.loader import load_org_bytes, load_org_yaml
 from ..spec.model import OrgSpec
 from .budgets import check_memory_budget, check_soul_budget
 from .graph import EscalationCycleError, EscalationResponseError, check_no_cycles
@@ -31,14 +32,16 @@ def validate_org(org_yaml_path: str | Path) -> tuple[OrgSpec, ValidationResult]:
     Returns (spec, result). If result.ok is False, the spec may still be
     usable for debug but must NOT be used for compile().
     """
+    return _validate_loaded(load_org_yaml(org_yaml_path))
+
+
+def validate_org_bytes(payload: bytes) -> tuple[OrgSpec, ValidationResult]:
+    """Validate the exact candidate bytes without reading or writing runtime files."""
+    return _validate_loaded(load_org_bytes(payload))
+
+
+def _validate_loaded(spec: OrgSpec) -> tuple[OrgSpec, ValidationResult]:
     result = ValidationResult()
-
-    try:
-        spec = load_org_yaml(org_yaml_path)
-    except OrgSpecError as e:
-        result.errors.append(str(e))
-        raise  # without a valid spec there is nothing else to check
-
     try:
         check_no_cycles(spec)
     except (EscalationCycleError, EscalationResponseError) as e:
