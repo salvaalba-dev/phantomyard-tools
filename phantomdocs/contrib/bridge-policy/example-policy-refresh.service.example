@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconcile only the committed organization source
+After=local-fs.target
+OnFailure=example-policy-alert@%n.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/example-policy-publisher/venv/bin/python -m phantomdocs.workflow_policy_operations --config /etc/example-policy/operations.json reconcile
+# No timeout may truncate a valid recovery or clear pending state.
+TimeoutStartSec=180

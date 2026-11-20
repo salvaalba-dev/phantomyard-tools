@@ -77,3 +77,8 @@ existing traversal-only directory ACL is sufficient. They still reject symlinks,
 non-root ownership and writable ancestors, and require read access to the final
 file. Writer directory descriptors retain ordinary opens for directory fsync.
 No directory listing permission or ACL expansion is required.
+
+The next installation gates are described in
+[Policy operations readiness](POLICY-OPERATIONS-READINESS.md): isolated runtime,
+reviewed writers, acknowledged alerts and a disposable real-systemd rehearsal.
+This does not authorize installation or establish current-host acceptance.

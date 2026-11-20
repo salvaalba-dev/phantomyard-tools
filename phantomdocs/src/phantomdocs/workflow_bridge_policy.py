@@ -130,6 +130,8 @@ def refresh(
     candidate_sha256=None,
     organization=None,
     commit_witness=False,
+    require_committed_source=False,
+    bootstrap_source_sha256=None,
 ):
     """Publish all snapshots under one policy lock; retry only our own journal.
 
@@ -137,6 +139,15 @@ def refresh(
     Prestart skips that outer lock to avoid a systemd dependency deadlock; it
     still holds the common policy lock for every destination and verification.
     """
+    if bootstrap_source_sha256 is not None and (
+        not require_committed_source
+        or candidate is not None
+        or prestart
+        or not isinstance(bootstrap_source_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", bootstrap_source_sha256)
+    ):
+        raise ValueError("bootstrap requires an explicit reviewed source digest")
+    commit_witness = commit_witness or require_committed_source
     source_publication.review_options(
         candidate, expected_source_sha256, candidate_sha256, organization, prestart
     )
@@ -177,6 +188,21 @@ def refresh(
                 fanout.ensure_independent(identities)
                 before = _read_policy(source)
                 parse_policy(before)
+                if require_committed_source and not inherited:
+                    if bootstrap_source_sha256 is not None:
+                        if (
+                            committed is not None
+                            or fanout.digest(before) != bootstrap_source_sha256
+                        ):
+                            raise ValueError(
+                                "bootstrap does not match an empty receipt and reviewed source"
+                            )
+                        if organization is not None:
+                            source_publication.validate(before, organization)
+                    elif committed != receipt(source, before):
+                        raise ValueError(
+                            "source differs from its committed receipt; investigate writers"
+                        )
                 old = [_read_policy(path) for path in paths]
                 settings = {
                     "source": source,
@@ -363,6 +389,8 @@ def main():
     parser.add_argument("--candidate-sha256")
     parser.add_argument("--organization")
     parser.add_argument("--commit-witness", action="store_true")
+    parser.add_argument("--require-committed-source", action="store_true")
+    parser.add_argument("--bootstrap-source-sha256")
     args = parser.parse_args()
     print(
         refresh(
@@ -378,6 +406,8 @@ def main():
             candidate_sha256=args.candidate_sha256,
             organization=args.organization,
             commit_witness=args.commit_witness,
+            require_committed_source=args.require_committed_source,
+            bootstrap_source_sha256=args.bootstrap_source_sha256,
         )
     )
 

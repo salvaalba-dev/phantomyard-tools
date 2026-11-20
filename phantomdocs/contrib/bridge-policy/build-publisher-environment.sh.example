@@ -1,0 +1,34 @@
+#!/bin/sh
+# Offline build artifact only. No service installation or live path discovery.
+# Args: clean checkout, reviewed commit, wheelhouse, hashed dependency lock, NEW output.
+set -eu
+umask 077
+unset PYTHONPATH PYTHONHOME
+test "$#" -eq 5
+checkout=$(realpath "$1")
+revision=$2
+wheelhouse=$(realpath "$3")
+lock=$(realpath "$4")
+output=$(realpath -m "$5")
+case "$revision" in *[!0-9a-f]*|'') exit 2;; esac
+test "${#revision}" -eq 40
+test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"
+test -z "$(git -C "$checkout" status --porcelain --untracked-files=all)"
+case "$output/" in "$checkout/"*) exit 2;; esac
+test ! -e "$output"
+mkdir "$output"
+mkdir "$output/source"
+# Export committed bytes; packaging must not dirty the user's checkout.
+git -C "$checkout" archive "$revision" phantomdocs phantomorg > "$output/source.tar"
+tar -xf "$output/source.tar" -C "$output/source"
+python3 -m venv "$output/venv"
+python="$output/venv/bin/python"
+# The reviewed lock must include all dependencies plus setuptools and wheel.
+"$python" -m pip install --no-index --find-links "$wheelhouse" --require-hashes -r "$lock"
+"$python" -m pip install --no-index --no-deps --no-build-isolation \
+  "$output/source/phantomdocs" "$output/source/phantomorg"
+"$python" -m pip check
+"$python" -m phantomdocs.workflow_policy_environment --output "$output/runtime-seal.json"
+printf '%s\n' "$revision" > "$output/source-revision.txt"
+sha256sum "$output/runtime-seal.json" "$lock" > "$output/build-inputs.sha256"
+# Leave failed builds for inspection. Never replace, repair, or erase an output.

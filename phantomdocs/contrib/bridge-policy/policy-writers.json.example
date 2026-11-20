@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "owner": "REPLACE_WITH_ACCOUNTABLE_OPERATOR",
+  "expires_utc": "2000-01-01T00:00:00Z",
+  "manual_source_writes": "prohibited",
+  "external_writers_reviewed": false,
+  "retired_units": ["example-old-refresh.timer", "example-old-refresh.path", "example-old-refresh.service"],
+  "writers": [
+    {"role": "publish", "owner": "REPLACE", "unit": "example-policy-publish.service", "unit_sha256": "REPLACE", "command": ["/opt/example-policy-publisher/venv/bin/python", "-m", "phantomdocs.workflow_policy_operations", "--config", "/etc/example-policy/operations.json", "publish"]},
+    {"role": "reconcile", "owner": "REPLACE", "unit": "example-policy-refresh.service", "unit_sha256": "REPLACE", "command": ["/opt/example-policy-publisher/venv/bin/python", "-m", "phantomdocs.workflow_policy_operations", "--config", "/etc/example-policy/operations.json", "reconcile"]},
+    {"role": "prestart", "owner": "REPLACE", "unit": "example-bridge.service", "unit_sha256": "REPLACE", "command": ["/opt/example-policy-publisher/venv/bin/python", "-m", "phantomdocs.workflow_policy_operations", "--config", "/etc/example-policy/operations.json", "prestart"]},
+    {"role": "collect", "owner": "REPLACE", "unit": "example-policy-collect.service", "unit_sha256": "REPLACE", "command": ["/opt/example-viewer/bin/collect"]}
+  ]
+}

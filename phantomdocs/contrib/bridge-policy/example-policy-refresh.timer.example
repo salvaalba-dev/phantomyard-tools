@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry the reviewed committed policy transaction
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=example-policy-refresh.service
+
+[Install]
+WantedBy=timers.target

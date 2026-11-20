@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source": "/srv/example-policy/source.yaml",
+  "destinations": ["/srv/example-policy/bridge.yaml", "/srv/example-policy/docs.yaml"],
+  "policy_lock": "/etc/example-policy/policy.lock",
+  "resolver": "/opt/example-bridge/org-routing.js",
+  "bridge_unit": "example-bridge.service",
+  "organization": "sample-org",
+  "python": "/opt/example-policy-publisher/venv/bin/python",
+  "runtime_seal": "/opt/example-policy-publisher/runtime-seal.json",
+  "runtime_seal_sha256": "REPLACE_WITH_REVIEWED_SEAL_SHA256",
+  "inventory": "/etc/example-policy/writers.json",
+  "inventory_sha256": "REPLACE_WITH_REVIEWED_INVENTORY_SHA256"
+}

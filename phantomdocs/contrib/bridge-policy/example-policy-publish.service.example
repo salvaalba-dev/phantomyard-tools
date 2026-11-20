@@ -1,0 +1,13 @@
+[Unit]
+Description=Publish an exact reviewed PhantomOrg candidate
+After=local-fs.target
+OnFailure=example-policy-alert@%n.service
+
+[Service]
+Type=oneshot
+UMask=0077
+# An operator supplies this root-private per-review file, never a persona.
+# CANDIDATE is a protected independent file; both digests are reviewed SHA-256.
+EnvironmentFile=/etc/example-policy/reviewed-candidate.env
+ExecStart=/opt/example-policy-publisher/venv/bin/python -m phantomdocs.workflow_policy_operations --config /etc/example-policy/operations.json publish --candidate ${CANDIDATE} --expected-source-sha256 ${SOURCE_SHA256} --candidate-sha256 ${CANDIDATE_SHA256}
+TimeoutStartSec=180

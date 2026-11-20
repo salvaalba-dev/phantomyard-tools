@@ -1,0 +1,10 @@
+[Unit]
+Description=Report policy drift and writer or publisher drift without repair
+After=local-fs.target
+OnFailure=example-policy-alert@%n.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/example-policy-publisher/venv/bin/python -m phantomdocs.workflow_policy_operations --config /etc/example-policy/operations.json check
+TimeoutStartSec=60

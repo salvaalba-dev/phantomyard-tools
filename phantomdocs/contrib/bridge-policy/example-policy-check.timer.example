@@ -1,0 +1,10 @@
+[Unit]
+Description=Check policy and reviewed writer drift
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=example-policy-check.service
+
+[Install]
+WantedBy=timers.target

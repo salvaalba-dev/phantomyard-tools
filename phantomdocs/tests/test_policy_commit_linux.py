@@ -92,3 +92,35 @@ def test_active_receipt_cannot_be_disabled_by_an_omitted_flag_or_ordinary_writer
     with pytest.raises(PolicyRecoveryRequired):  # noqa: SIM117
         with policy_guard(options["lock_path"], exclusive=True):
             pytest.fail("ordinary writer bypassed committed protocol")
+
+
+def test_strict_reconcile_does_not_bless_a_manual_source_edit(trial):
+    paths, state, options = trial
+    publisher.refresh(**options, commit_witness=True)
+    before = {name: paths[name].read_bytes() for name in ("bridge", "docs", "lock")}
+    paths["source"].write_bytes(b"version: 1\nmanual: true\n")
+    with pytest.raises(ValueError, match="receipt"):
+        publisher.refresh(**options, require_committed_source=True)
+    assert {name: paths[name].read_bytes() for name in before} == before
+    assert not state["active"]
+    assert not paths["lock"].with_name("lock.pending").exists()
+
+
+def test_strict_bootstrap_requires_review_and_preserves_metadata(trial):
+    paths, _, options = trial
+    before = {
+        name: policy_permissions(str(paths[name]))
+        for name in ("source", "bridge", "docs")
+    }
+    reviewed = committed.digest(paths["source"].read_bytes())
+    with pytest.raises(ValueError, match="receipt"):
+        publisher.refresh(**options, require_committed_source=True)
+    assert (
+        publisher.refresh(
+            **options, require_committed_source=True, bootstrap_source_sha256=reviewed
+        )
+        == "synchronized"
+    )
+    assert {name: policy_permissions(str(paths[name])) for name in before} == before
+    with committed.committed_guard(options["lock_path"], str(paths["source"])) as value:
+        assert value["sha256"] == reviewed
