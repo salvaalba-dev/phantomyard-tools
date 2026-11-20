@@ -288,6 +288,7 @@ def test_logging_or_success_exit_alone_is_not_a_delivered_alert(
 
 
 def test_alert_uses_bounded_shell_free_delivery_and_requires_a_receipt(monkeypatch):
+    monkeypatch.delenv("PHANTOMBOT_PERSONA", raising=False)
     monkeypatch.setattr(alert, "protected_handler", lambda _: None)
     seen = []
 

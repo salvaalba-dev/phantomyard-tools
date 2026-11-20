@@ -66,20 +66,21 @@ supplementary groups; other callers must already be that UID. HOME and
 PHANTOMBOT_PERSONA are set explicitly for that existing execution identity.
 No account, grant, scope or credential file is created or changed by this adapter.
 
-`workspace_send_args` must begin with `send` and contain exactly one standalone
-`{recipient}` and `{message}` placeholder; `{subject}` is optional. All other
-arguments are fixed reviewed strings. The exact options are deliberately not
-guessed: the actual installed workspace source/help, execution identity and
-output must be reviewed first. Its source digest also prevents replacing it
-silently with a differently shaped CLI. The public example's empty argument list
-and invalid digest prevent accidental activation.
+The bound interface is `workspace.py send <to> <subject> --body <msg>`.
+`workspace_send_args` must therefore be exactly
+`["send", "{recipient}", "{subject}", "--body", "{message}"]`. Guessed options,
+additional arguments and reordered placeholders are refused. The adapter supplies
+one fixed operational subject and preserves the recipient and body as separate
+arguments without a shell.
 
-Select one reviewed output contract: `json-id` requires a JSON object's `id`;
-`message-id-line` requires exactly one complete `Message ID: <value>` line.
-Exit success alone is never acceptance. Raw stdout/stderr are neither persisted
-nor forwarded. Verify that the selected interface reports the provider's actual
-Message ID, rather than an invented success string, before installation approval.
-No real workspace interface or delivery was verified by these local tests.
+`workspace_receipt` must be `message-id-line`: stdout must contain exactly one
+complete `Message ID: <value>` line. JSON IDs and exit success alone are refused.
+Raw stdout/stderr are neither persisted nor forwarded. The example now contains
+these concrete arguments and receipt format, but its source hash remains an
+invalid placeholder. Pin the SHA-256 of the actual selected persona's script and
+review that its command/output match this contract before activation. No hash of
+an uninspected installation is invented, and no real mail delivery was verified
+by these local tests.
 
 An optional later SENT lookup can confirm that the provider retained a message,
 but only through an already-authorized read interface. Do not request

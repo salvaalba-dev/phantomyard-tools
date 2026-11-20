@@ -5,7 +5,7 @@
   "ledger_path": "/var/lib/example-policy-alerts/sends.jsonl",
   "telegram_chat": "10001",
   "mail_to": "operator@example.invalid",
-  "workspace_send_args": [],
+  "workspace_send_args": ["send", "{recipient}", "{subject}", "--body", "{message}"],
   "workspace_sha256": "REPLACE_WITH_REVIEWED_PERSONA_WORKSPACE_SHA256",
-  "workspace_receipt": "json-id"
+  "workspace_receipt": "message-id-line"
 }

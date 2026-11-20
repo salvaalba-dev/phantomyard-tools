@@ -105,6 +105,12 @@ jobs:
           python3 -m pip install --quiet ".[dev]" "../phantomorg"
           python3 -m pytest -q
 
+      - name: Alert regressions with an ambient persona
+        working-directory: phantomdocs
+        env:
+          PHANTOMBOT_PERSONA: ci-policy-regression
+        run: python3 -m pytest tests/test_policy_operations.py tests/test_policy_alert_routes.py tests/test_notify_adapter.py -q
+
       - name: Privileged synthetic policy coordination tests (phantomdocs)
         working-directory: phantomdocs
         run: |

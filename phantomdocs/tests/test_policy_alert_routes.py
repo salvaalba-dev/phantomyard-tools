@@ -110,3 +110,94 @@ def test_event_cannot_override_the_reviewed_recipient(config):
             },
             state="timeout",
         )
+
+
+@pytest.mark.parametrize(
+    "stdout,code,expected",
+    [
+        ("", 0, "unknown"),
+        (" \n", 0, "unknown"),
+        ("invalid state\nextra", 0, "unknown"),
+        ("", 1, "unknown"),
+        ("timeout\n", 0, "timeout"),
+    ],
+)
+def test_missing_or_invalid_unit_metadata_still_delivers_both_alerts(
+    config, monkeypatch, capsys, stdout, code, expected
+):
+    import io
+    import json
+    import sys
+
+    sent = []
+    monkeypatch.setattr(sys, "argv", ["routes", "--config", "/example/config"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "policy-unit-failed",
+                    "unit": "refresh.service",
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(routes, "read_config", lambda _: config)
+    monkeypatch.setattr(
+        routes.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=code, stdout=stdout),
+    )
+    monkeypatch.setattr(
+        routes,
+        "_deliver",
+        lambda handler, payload: sent.append(payload) or "provider:42",
+    )
+    routes.main()
+    result = capsys.readouterr()
+    assert json.loads(result.out)["delivered"] is True and not result.err
+    assert [p["channel"] for p in sent] == ["telegram", "email"]
+    assert all(f"state={expected} " in p["message"] for p in sent)
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("unavailable"), routes.subprocess.TimeoutExpired("systemctl", 2)]
+)
+def test_failed_unit_lookup_is_metadata_degradation_not_alert_loss(
+    config, monkeypatch, capsys, error
+):
+    import io
+    import json
+    import sys
+
+    sent = []
+    monkeypatch.setattr(sys, "argv", ["routes", "--config", "/example/config"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "policy-unit-failed",
+                    "unit": "refresh.service",
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(routes, "read_config", lambda _: config)
+
+    def unavailable(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(routes.subprocess, "run", unavailable)
+    monkeypatch.setattr(
+        routes,
+        "_deliver",
+        lambda handler, payload: sent.append(payload) or "provider:42",
+    )
+    routes.main()
+    assert json.loads(capsys.readouterr().out)["delivered"] is True
+    assert len(sent) == 2 and all("state=unknown " in p["message"] for p in sent)

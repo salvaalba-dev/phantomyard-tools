@@ -32,6 +32,7 @@ class PersonaResolutionError(ValueError):
 
 MAX_BYTES = 131072
 IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}"
+WORKSPACE_SEND_ARGS = ["send", "{recipient}", "{subject}", "--body", "{message}"]
 
 
 @contextmanager
@@ -211,30 +212,14 @@ def validate_runtime(value):
         r"[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}", value["mail_to"]
     ):
         raise ValueError("single mail recipient required")
-    if value["workspace_receipt"] not in ("json-id", "message-id-line"):
+    if value["workspace_receipt"] != "message-id-line":
         raise ValueError("reviewed workspace receipt format required")
     if not isinstance(value["workspace_sha256"], str) or not re.fullmatch(
         r"[0-9a-f]{64}", value["workspace_sha256"]
     ):
         raise ValueError("reviewed workspace digest required")
-    args = value["workspace_send_args"]
-    if (
-        not isinstance(args, list)
-        or not args
-        or args[0] != "send"
-        or not all(isinstance(a, str) and "\x00" not in a for a in args)
-    ):
-        raise ValueError("reviewed workspace send interface required")
-    if args.count("{recipient}") != 1 or args.count("{message}") != 1:
-        raise ValueError("workspace must receive one explicit recipient and message")
-    if any(
-        "{" in a
-        and a not in ("{recipient}", "{message}", "{subject}")
-        or "}" in a
-        and a not in ("{recipient}", "{message}", "{subject}")
-        for a in args
-    ):
-        raise ValueError("unknown workspace argument placeholder")
+    if value["workspace_send_args"] != WORKSPACE_SEND_ARGS:
+        raise ValueError("workspace requires send <to> <subject> --body <msg>")
     return value
 
 
@@ -355,12 +340,10 @@ def telegram(persona, owner, recipient, message):
 def parse_mail_receipt(raw, format_name):
     if len(raw) > MAX_BYTES:
         raise ValueError("workspace output exceeded limit")
-    if format_name == "json-id":
-        result = json.loads(raw)
-        identifier = result.get("id") if isinstance(result, dict) else None
-    else:
-        matches = re.findall(r"^Message ID: ([A-Za-z0-9_.@<>:-]+)$", raw, re.MULTILINE)
-        identifier = matches[0] if len(matches) == 1 else None
+    if format_name != "message-id-line":
+        raise ValueError("workspace requires a Message ID: receipt line")
+    matches = re.findall(r"^Message ID: ([A-Za-z0-9_.@<>:-]+)$", raw, re.MULTILINE)
+    identifier = matches[0] if len(matches) == 1 else None
     if not isinstance(identifier, str) or not re.fullmatch(
         r"[A-Za-z0-9_.@<>:-]{1,200}", identifier
     ):
