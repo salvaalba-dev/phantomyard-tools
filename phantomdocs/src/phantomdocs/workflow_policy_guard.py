@@ -32,7 +32,8 @@ def policy_guard(lock_path, *, exclusive, recovering=False, timeout=None):
     path = Path(lock_path)
     if not path.is_absolute() or ".." in path.parts or path.name in ("", "."):
         raise ValueError("policy lock path must be absolute")
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    # Pin and inspect ancestors without requiring permission to list them.
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     directory = os.open("/", flags)
     try:
         for component in path.parts[1:-1]:

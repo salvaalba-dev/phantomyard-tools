@@ -115,7 +115,7 @@ def write_committed_locked(lock_path, source, payload):
 def committed_guard(lock_path, source):
     """No creation, recovery, source access or permission changes are performed."""
     with policy_guard(lock_path, exclusive=False, timeout=2):
-        with protected_parent(lock_path) as (directory, name):
+        with protected_parent(lock_path, search_only=True) as (directory, name):
             fd = open_protected_file(directory, name)
             try:
                 raw = os.read(fd, MAX_RECEIPT + 1)

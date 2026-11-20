@@ -54,7 +54,7 @@ def _unique(pairs):
 
 def _read_protected(path):
     """Read bounded content from an existing root-owned, protected file."""
-    with protected_parent(path) as (directory, name):
+    with protected_parent(path, search_only=True) as (directory, name):
         fd = open_protected_file(directory, name)
         try:
             before = os.fstat(fd)
