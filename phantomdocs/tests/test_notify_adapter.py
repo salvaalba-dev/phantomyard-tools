@@ -304,6 +304,7 @@ def test_telegram_uses_fixed_https_origin_and_keeps_token_out_of_request_body(
         ).encode(),
     )
     seen = []
+    handlers = []
 
     class Response:
         def __enter__(self):
@@ -320,13 +321,17 @@ def test_telegram_uses_fixed_https_origin_and_keeps_token_out_of_request_body(
         return Response()
 
     monkeypatch.setattr(
-        adapter.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=opened)
+        adapter.urllib.request,
+        "build_opener",
+        lambda *a: handlers.extend(a) or SimpleNamespace(open=opened),
     )
     assert adapter.telegram(Path("/persona"), 1001, "10001", "synthetic") == (
         "42",
         1700000000,
     )
     request, options = seen[0]
+    assert any(isinstance(item, adapter.IPv4FirstHTTPSHandler) for item in handlers)
+    assert any(isinstance(item, adapter.NoRedirect) for item in handlers)
     assert request.full_url == "https://api.telegram.org/bot" + token + "/sendMessage"
     assert json.loads(request.data) == {"chat_id": "10001", "text": "synthetic"}
     assert token.encode() not in request.data and options["timeout"] == 20
