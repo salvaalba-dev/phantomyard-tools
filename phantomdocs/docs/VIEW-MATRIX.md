@@ -11,7 +11,7 @@ The hosting viewer must authenticate the session and bind its actor and project
 scope before it contacts an actor-specific Unix broker. The broker verifies the
 viewer's kernel UID, holds the shared policy and native manifest locks, starts
 the Workspace reader under the configured agent UID with no supplementary groups,
-and retains the locks until the bounded delivery acknowledgement. The viewer
+and normally retains the locks until the bounded delivery acknowledgement. The viewer
 checks the broker UID and rechecks the session and project scope before delivery.
 Protect each broker configuration, socket parent, Python interpreter and all code
 on the module search path from modification by the viewer and agent accounts.
@@ -102,6 +102,13 @@ write a second response after a partial delivery. Keep the service limit above
 the host deadline with a reviewed cleanup margin. This bounds waiting but does
 not identify why a past instance timed out or replace investigation of the
 specific holder, external reader or client involved.
+
+The deadline also applies while the viewer is still delivering HTTP output: if
+it expires before acknowledgement, the broker releases its locks even if that
+output is incomplete. The individual request, worker and acknowledgement
+limits can add up to more than the global deadline, which may therefore close
+the connection without a structured error. Policy lock acquisition has its own
+optional timeout; manifest lock acquisition relies on the global deadline here.
 
 Provision the socket parent with a reviewed tmpfiles rule and protect it from
 replacement. Check the units with `systemd-analyze verify`, then test a separate
