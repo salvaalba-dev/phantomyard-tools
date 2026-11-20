@@ -143,7 +143,9 @@ installation acceptance rather than fall back to local logging.
 
 `workflow_policy_alert_routes.py` implements direct Telegram as primary and an
 email trace for every incident, with the one-line format `unit=... host=...
-state=... time=...` in UTC. The private configuration fixes one positive Telegram
+state=... time=...` in UTC. Empty, malformed or unavailable systemd Result
+metadata degrades to `state=unknown`; it never suppresses delivery to either
+configured route. The private configuration fixes one positive Telegram
 user chat and one mailbox. No group/Teamup route is implicit. Email is attempted
 after either Telegram success or failure; if either required route fails, the
 adapter stays failed rather than concealing degraded delivery. A partial attempt
@@ -170,8 +172,9 @@ its transport wrapper; do not guess options or broaden credential access.
 
 The version-controlled [persona-aware notify adapter](NOTIFY-ADAPTER.md) now
 implements direct Telegram and the reviewed workspace-send binding, plus a
-private receipt ledger. The concrete workspace CLI/output and an approved real
-delivery probe remain installation gates. Operational chat/mailbox
+private receipt ledger. The concrete workspace interface is bound to `send <to> <subject> --body <msg>`
+and a `Message ID:` receipt line. The installed script hash and conformance to
+that binding, plus an approved real delivery probe, remain installation gates. Operational chat/mailbox
 bindings belong only in private configuration, never this public repository.
 
 ## Real systemd rehearsal in disposable paths

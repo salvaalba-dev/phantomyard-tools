@@ -24,13 +24,13 @@ def runtime():
         "mail_to": "operator@example.invalid",
         "workspace_send_args": [
             "send",
-            "REVIEWED_RECIPIENT_OPTION",
             "{recipient}",
-            "REVIEWED_MESSAGE_OPTION",
+            "{subject}",
+            "--body",
             "{message}",
         ],
         "workspace_sha256": "a" * 64,
-        "workspace_receipt": "json-id",
+        "workspace_receipt": "message-id-line",
     }
 
 
@@ -192,10 +192,10 @@ def test_payload_cannot_override_private_destinations(delivery):
 @pytest.mark.parametrize(
     "raw,format_name",
     [
-        ("sent", "json-id"),
-        ('{"ok":true}', "json-id"),
+        ("sent", "message-id-line"),
+        ('{"ok":true}', "message-id-line"),
         ("Message ID: one\nMessage ID: two", "message-id-line"),
-        ('{"id":"bad\\nvalue"}', "json-id"),
+        ('{"id":"bad\\nvalue"}', "message-id-line"),
     ],
 )
 def test_mail_exit_success_without_one_provider_message_id_is_insufficient(
@@ -205,8 +205,9 @@ def test_mail_exit_success_without_one_provider_message_id_is_insufficient(
         adapter.parse_mail_receipt(raw, format_name)
 
 
-def test_supported_mail_receipts_are_explicitly_selected():
-    assert adapter.parse_mail_receipt('{"id":"gmail42"}', "json-id") == "gmail42"
+def test_native_mail_receipt_is_a_single_Message_ID_line():
+    with pytest.raises(ValueError):
+        adapter.parse_mail_receipt('{"id":"gmail42"}', "json-id")
     assert (
         adapter.parse_mail_receipt(
             "Message ID: <example42@example.invalid>\n", "message-id-line"
@@ -337,7 +338,7 @@ def test_workspace_runs_only_the_pinned_persona_tool_under_its_existing_uid(
         "run",
         lambda *a, **kw: (
             seen.append((a, kw))
-            or SimpleNamespace(returncode=0, stdout='{"id":"provider42"}')
+            or SimpleNamespace(returncode=0, stdout="Message ID: provider42\n")
         ),
     )
     assert adapter.email(
@@ -349,10 +350,14 @@ def test_workspace_runs_only_the_pinned_persona_tool_under_its_existing_uid(
         "synthetic",
     ) == ("provider42", None)
     args, options = seen[0]
-    assert args[0][:3] == [
+    assert args[0] == [
         "/usr/bin/python3",
         str(Path("/persona/resolved") / "tools" / "workspace.py"),
         "send",
+        "operator@example.invalid",
+        "Organization policy operational alert",
+        "--body",
+        "synthetic",
     ]
     assert (
         options["user"] == 1001
@@ -366,3 +371,46 @@ def test_workspace_runs_only_the_pinned_persona_tool_under_its_existing_uid(
         "PHANTOMBOT_PERSONA": "resolved",
     }
     assert "shell" not in options and options["timeout"] == 5
+
+
+@pytest.mark.parametrize(
+    "change", ["json-receipt", "guessed-options", "extra-argument"]
+)
+def test_only_the_confirmed_workspace_interface_is_accepted(runtime, change):
+    if change == "json-receipt":
+        runtime["workspace_receipt"] = "json-id"
+    elif change == "guessed-options":
+        runtime["workspace_send_args"] = [
+            "send",
+            "--to",
+            "{recipient}",
+            "--body",
+            "{message}",
+        ]
+    else:
+        runtime["workspace_send_args"].append("--extra")
+    with pytest.raises(ValueError):
+        adapter.validate_runtime(runtime)
+
+
+def test_workspace_hash_mismatch_refuses_mail_before_subprocess(runtime, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace())
+    monkeypatch.setattr(
+        adapter, "read_file", lambda *a, **kw: b"different installed workspace"
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unreviewed workspace must not execute")
+
+    monkeypatch.setattr(adapter.subprocess, "run", forbidden)
+    with pytest.raises(ValueError, match="reviewed source"):
+        adapter.email(
+            runtime,
+            "resolved",
+            Path("/persona/resolved"),
+            1001,
+            "operator@example.invalid",
+            "synthetic",
+        )

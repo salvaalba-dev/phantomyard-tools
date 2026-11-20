@@ -175,6 +175,21 @@ def route(config, event, *, state, now=None):
     }
 
 
+def unit_result(unit):
+    try:
+        result = subprocess.run(  # nosec B603 -- fixed executable, unit validated by the caller
+            ["/usr/bin/systemctl", "show", unit, "--property=Result", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    state = result.stdout.strip() if result.returncode == 0 else ""
+    return state if re.fullmatch(r"[a-z0-9-]{1,48}", state) else "unknown"
+
+
 def main():
     import sys
 
@@ -194,14 +209,7 @@ def main():
             raise ValueError("invalid unit")
         state = "probe"
         if event.get("kind") != "policy-alert-probe":
-            result = subprocess.run(  # nosec B603 -- fixed executable and validated unit
-                ["/usr/bin/systemctl", "show", unit, "--property=Result", "--value"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            )
-            state = result.stdout.strip() if result.returncode == 0 else "unavailable"
+            state = unit_result(unit)
         print(json.dumps(route(config, event, state=state)))
     except (OSError, ValueError, subprocess.SubprocessError):
         print("alert routing unavailable", file=sys.stderr)
