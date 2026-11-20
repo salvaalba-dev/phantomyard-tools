@@ -339,8 +339,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def connect_ipv4_first(host, port, timeout):
-    """Bound DNS and TCP setup; never retry a request after bytes are sent."""
+def connect_ipv4_first(host, port, timeout, context):
+    """Bound DNS, TCP and TLS; never retry after request bytes are sent."""
     deadline = time.monotonic() + timeout
     answers = queue.Queue(maxsize=1)
 
@@ -378,17 +378,33 @@ def connect_ipv4_first(host, port, timeout):
         # failures; cap any single dead address at three seconds.
         per_address = min(3.0, remaining / (len(candidates) - index))
         sock = None
+        secure = None
         try:
             sock = socket.socket(family, kind, proto)
             sock.settimeout(per_address)
+            attempt_deadline = time.monotonic() + per_address
             sock.connect(address)
-            remaining = deadline - time.monotonic()
+            remaining = min(deadline, attempt_deadline) - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Telegram connection budget exhausted")
             sock.settimeout(remaining)
-            return sock, deadline
+            secure = context.wrap_socket(sock, server_hostname=host)
+            now = time.monotonic()
+            if min(deadline, attempt_deadline) - now <= 0:
+                raise TimeoutError("Telegram connection budget exhausted")
+            secure.settimeout(deadline - now)
+            return secure
+        except ssl.SSLError:
+            # Certificate or protocol failure is not a connectivity fallback.
+            if secure is not None:
+                secure.close()
+            if sock is not None:
+                sock.close()
+            raise
         except OSError as error:
             last_error = error
+            if secure is not None:
+                secure.close()
             if sock is not None:
                 sock.close()
     if last_error is not None:
@@ -400,18 +416,9 @@ class IPv4FirstHTTPSConnection(http.client.HTTPSConnection):
     def connect(self):
         if self._tunnel_host:
             raise OSError("Telegram proxy tunnels are not supported")
-        raw, deadline = connect_ipv4_first(self.host, self.port, self.timeout)
-        try:
-            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Telegram TLS connection budget exhausted")
-            self.sock.settimeout(remaining)
-        except BaseException:
-            if self.sock is not None:
-                self.sock.close()
-            raw.close()
-            raise
+        self.sock = connect_ipv4_first(
+            self.host, self.port, self.timeout, self._context
+        )
 
 
 class IPv4FirstHTTPSHandler(urllib.request.HTTPSHandler):
