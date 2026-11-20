@@ -78,6 +78,17 @@ The token stays in process memory/request handling, outside subprocess arguments
 ledger rows and diagnostic output. Provider exceptions are not echoed because
 their URLs may contain a token.
 
+Before activation, verify DNS and TCP connectivity for both configured routes
+from the actual service identity and minimal environment. A broken IPv6 route
+can delay connections even when DNS resolves; host-wide resolver preferences
+affect other services and should be reviewed independently. The Telegram client
+tries IPv4 addresses first, then IPv6, with a capped budget per address and one
+20-second DNS/TCP/TLS connection deadline. Certificate verification and TLS SNI
+use the original Telegram hostname. Only connection setup is retried: once a
+request may have been sent, a timeout is an uncertain delivery, never an
+automatic retry. The workspace mail client has its own networking behavior and
+is not changed by this Telegram-specific connection policy.
+
 ## Existing workspace mail transport
 
 Only the selected persona's `tools/workspace.py` can be invoked. Its exact

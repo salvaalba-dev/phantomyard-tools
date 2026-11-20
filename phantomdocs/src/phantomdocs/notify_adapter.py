@@ -7,13 +7,18 @@ or OAuth scope changes. Run only after separate installation/delivery approval.
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
+import queue
 import re
+import socket
 import ssl
 import stat
 import subprocess  # nosec B404 -- fixed interpreter and pinned persona tool, no shell
 import sys
+import threading
+import time
 import urllib.request
 import uuid
 
@@ -334,6 +339,91 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def connect_ipv4_first(host, port, timeout):
+    """Bound DNS and TCP setup; never retry a request after bytes are sent."""
+    deadline = time.monotonic() + timeout
+    answers = queue.Queue(maxsize=1)
+
+    def resolve():
+        try:
+            answers.put((socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM), None))
+        except OSError as error:
+            answers.put((None, error))
+
+    # getaddrinfo has no stdlib timeout; a daemon prevents stalled DNS from
+    # holding up shutdown. It never receives credentials or request content.
+    threading.Thread(target=resolve, daemon=True).start()
+    try:
+        addresses, error = answers.get(timeout=max(0, deadline - time.monotonic()))
+    except queue.Empty:
+        raise TimeoutError("Telegram address resolution timed out") from None
+    if error is not None:
+        raise error
+    candidates = list(
+        dict.fromkeys(
+            (family, kind, proto, address)
+            for family, kind, proto, _, address in addresses
+            if family in (socket.AF_INET, socket.AF_INET6)
+        )
+    )
+    candidates.sort(key=lambda item: item[0] != socket.AF_INET)
+    if not candidates:
+        raise OSError("Telegram has no usable addresses")
+    last_error = None
+    for index, (family, kind, proto, address) in enumerate(candidates):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        # Share the remaining budget so IPv6 retains an opportunity after IPv4
+        # failures; cap any single dead address at three seconds.
+        per_address = min(3.0, remaining / (len(candidates) - index))
+        sock = None
+        try:
+            sock = socket.socket(family, kind, proto)
+            sock.settimeout(per_address)
+            sock.connect(address)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Telegram connection budget exhausted")
+            sock.settimeout(remaining)
+            return sock, deadline
+        except OSError as error:
+            last_error = error
+            if sock is not None:
+                sock.close()
+    if last_error is not None:
+        raise last_error
+    raise TimeoutError("Telegram connection budget exhausted")
+
+
+class IPv4FirstHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        if self._tunnel_host:
+            raise OSError("Telegram proxy tunnels are not supported")
+        raw, deadline = connect_ipv4_first(self.host, self.port, self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Telegram TLS connection budget exhausted")
+            self.sock.settimeout(remaining)
+        except BaseException:
+            if self.sock is not None:
+                self.sock.close()
+            raw.close()
+            raise
+
+
+class IPv4FirstHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(
+            IPv4FirstHTTPSConnection,
+            request,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
+
+
 def telegram(persona, owner, recipient, message):
     config = tomllib.loads(
         read_file(persona / "config.toml", owner, private=True).decode()
@@ -357,7 +447,7 @@ def telegram(persona, owner, recipient, message):
     )
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
-        urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+        IPv4FirstHTTPSHandler(context=ssl.create_default_context()),
         NoRedirect(),
     )
     with opener.open(request, timeout=20) as response:  # nosec B310 -- fixed HTTPS Telegram origin, no redirects
