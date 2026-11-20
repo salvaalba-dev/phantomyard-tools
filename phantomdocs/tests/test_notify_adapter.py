@@ -431,3 +431,37 @@ def test_workspace_hash_mismatch_refuses_mail_before_subprocess(runtime, monkeyp
             "operator@example.invalid",
             "synthetic",
         )
+
+
+def test_cli_loads_the_root_controlled_profile_without_relaxing_secret_reader(
+    runtime, monkeypatch, capsys
+):
+    import io
+    import sys
+
+    selected = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["notify-adapter", "--runtime-config", "/etc/example-alerts/runtime.json"],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(
+        adapter, "read_runtime_config", lambda path: selected.append(path) or runtime
+    )
+
+    def secret_reader_must_not_be_reused(*args, **kwargs):
+        pytest.fail("runtime metadata must not reuse or loosen the 0600 secret reader")
+
+    monkeypatch.setattr(adapter, "read_file", secret_reader_must_not_be_reused)
+    monkeypatch.setattr(
+        adapter,
+        "deliver",
+        lambda config, payload, persona: {
+            "delivered": True,
+            "profile": config["schema_version"],
+        },
+    )
+    adapter.main()
+    assert selected == ["/etc/example-alerts/runtime.json"]
+    assert json.loads(capsys.readouterr().out) == {"delivered": True, "profile": 1}
