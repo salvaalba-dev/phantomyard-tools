@@ -195,6 +195,11 @@ def test_payload_cannot_override_private_destinations(delivery):
         ("sent", "message-id-line"),
         ('{"ok":true}', "message-id-line"),
         ("Message ID: one\nMessage ID: two", "message-id-line"),
+        (
+            "\N{WHITE HEAVY CHECK MARK} Sent. Message ID: one\nMessage ID: two",
+            "message-id-line",
+        ),
+        ("\N{WHITE HEAVY CHECK MARK} Sent. Message ID: ?", "message-id-line"),
         ('{"id":"bad\\nvalue"}', "message-id-line"),
     ],
 )
@@ -213,6 +218,18 @@ def test_native_mail_receipt_is_a_single_Message_ID_line():
             "Message ID: <example42@example.invalid>\n", "message-id-line"
         )
         == "<example42@example.invalid>"
+    )
+
+
+def test_installed_workspace_receipt_prefix_is_accepted():
+    # The installed persona tool prints "✅ Sent. Message ID: <id>" (one line on
+    # stdout), so the prefixed form must yield the provider id, not a failure.
+    assert (
+        adapter.parse_mail_receipt(
+            "\N{WHITE HEAVY CHECK MARK} Sent. Message ID: 19a4c2f7b3e1d9a0\n",
+            "message-id-line",
+        )
+        == "19a4c2f7b3e1d9a0"
     )
 
 

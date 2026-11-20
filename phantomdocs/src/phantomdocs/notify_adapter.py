@@ -342,7 +342,14 @@ def parse_mail_receipt(raw, format_name):
         raise ValueError("workspace output exceeded limit")
     if format_name != "message-id-line":
         raise ValueError("workspace requires a Message ID: receipt line")
-    matches = re.findall(r"^Message ID: ([A-Za-z0-9_.@<>:-]+)$", raw, re.MULTILINE)
+    # The installed persona tool prints "✅ Sent. Message ID: <id>". The bare
+    # form is still accepted so the contract does not depend on that prefix;
+    # exactly one receipt line is required either way.
+    matches = re.findall(
+        r"^(?:\N{WHITE HEAVY CHECK MARK} Sent\. )?Message ID: ([A-Za-z0-9_.@<>:-]+)$",
+        raw,
+        re.MULTILINE,
+    )
     identifier = matches[0] if len(matches) == 1 else None
     if not isinstance(identifier, str) or not re.fullmatch(
         r"[A-Za-z0-9_.@<>:-]{1,200}", identifier
