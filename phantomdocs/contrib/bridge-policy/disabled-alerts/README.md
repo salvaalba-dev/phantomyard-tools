@@ -52,6 +52,10 @@ for the complete two-route handler, and 60 seconds for the unit. Two routes run
 sequentially; 30 seconds does not enclose two 20-second sends. Remaining margin
 covers the Result lookup, startup and ledger operations. Telegram's socket timeout
 is not an end-to-end deadline; the enclosing process limits remain necessary.
+`test_alert_delivery_budget.py` reads the actual Python timeout arguments and
+both unit templates. It enforces provider < transport < handler < unit and
+requires two transport budgets plus the Result lookup to fit inside the handler,
+with positive margin. It does not duplicate the expected numeric values.
 
 Timeout after provider acceptance is still uncertain, not proof of non-delivery.
 There is no automatic retry. Review the ledger/provider state before retrying;
