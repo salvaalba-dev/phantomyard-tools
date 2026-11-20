@@ -1,0 +1,9 @@
+[Unit]
+Description=Reconcile or report an authoritative policy source change
+
+[Path]
+PathChanged=/srv/example-policy/source.yaml
+Unit=example-policy-refresh.service
+
+[Install]
+WantedBy=multi-user.target

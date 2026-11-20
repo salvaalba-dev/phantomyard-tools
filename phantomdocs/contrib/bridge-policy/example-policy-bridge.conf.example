@@ -1,0 +1,6 @@
+[Unit]
+OnFailure=example-policy-alert@%n.service
+
+[Service]
+# Append the cooperating prestart; do not replace the bridge's ExecStart.
+ExecStartPre=/opt/example-policy-publisher/venv/bin/python -m phantomdocs.workflow_policy_operations --config /etc/example-policy/operations.json prestart

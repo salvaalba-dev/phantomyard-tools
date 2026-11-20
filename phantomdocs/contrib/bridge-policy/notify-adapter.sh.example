@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+# Optional --persona is supplied by the caller; no persona name is embedded here.
+exec /usr/bin/python3 /opt/example-policy-alert/notify_adapter.py --runtime-config /etc/example-policy/notify-runtime.json "$@"

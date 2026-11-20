@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "host": "example-host",
+  "telegram_chat": "10001",
+  "mail_to": "operator@example.invalid",
+  "telegram_handler": "/opt/example-policy-alert/notify-adapter",
+  "mail_handler": "/opt/example-policy-alert/notify-adapter"
+}

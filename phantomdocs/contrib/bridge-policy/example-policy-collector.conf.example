@@ -1,0 +1,4 @@
+[Unit]
+OnFailure=example-policy-alert@%n.service
+# Keep the existing collector command with committed-lock publication support.
+# The collector must never invoke bridge orchestration or repair policy copies.

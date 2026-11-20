@@ -116,7 +116,7 @@ jobs:
           sudo env "PYTHONPATH=$PWD/src:$PWD/tests" "$RUNNER_TEMP/pd-policy-ci/bin/python" -m pytest \
             tests/test_workflow_admission_linux.py tests/test_policy_publish.py \
             tests/test_policy_lifecycle.py tests/test_policy_fanout_linux.py \
-            tests/test_phantomorg_source_linux.py tests/test_policy_commit_linux.py -q
+            tests/test_phantomorg_source_linux.py tests/test_policy_commit_linux.py tests/test_notify_adapter_linux.py -q
 
       - name: Smoke test (phantomdocs)
         working-directory: phantomdocs
