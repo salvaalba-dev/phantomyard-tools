@@ -93,6 +93,16 @@ NoNewPrivileges=yes
 TimeoutStartSec=65
 ```
 
+The dedicated, single-request POSIX host enforces a 55-second wall-clock
+deadline for the whole request, including policy/catalog lock waits, worker
+execution, response and acknowledgement. This leaves ten seconds for cleanup
+before the example unit's 65-second limit. A deadline closes the connection,
+releases held locks and exits with a sanitized failure; it does not retry or
+write a second response after a partial delivery. Keep the service limit above
+the host deadline with a reviewed cleanup margin. This bounds waiting but does
+not identify why a past instance timed out or replace investigation of the
+specific holder, external reader or client involved.
+
 Provision the socket parent with a reviewed tmpfiles rule and protect it from
 replacement. Check the units with `systemd-analyze verify`, then test a separate
 socket using the real service UIDs before enabling it. Verify the viewer's
