@@ -3,8 +3,9 @@
 The host must pass root-controlled configuration and an authority context. One
 broker is bound to one actor and one trusted viewer service UID. The viewer
 must authenticate the HTTP session and restrict it to the bound actor before
-requesting data. A client acknowledgement releases the policy locks only after
-the viewer has completed its bounded response.
+requesting data. On successful delivery, the policy locks remain held until the
+viewer acknowledges its bounded response. A host deadline or failure can close
+the connection and release the locks before the viewer completes its response.
 """
 
 import json

@@ -12,6 +12,7 @@ from .view_matrix_broker import serve
 from .workflow_admission_config import _json
 
 REQUEST_DEADLINE_SECONDS = 55
+EXAMPLE_SERVICE_TIMEOUT_SECONDS = 65
 
 
 class MatrixRequestDeadline(BaseException):
@@ -21,7 +22,10 @@ class MatrixRequestDeadline(BaseException):
 @contextmanager
 def request_deadline(seconds):
     """Enforce one wall-clock deadline in this single-request POSIX process."""
-    if type(seconds) not in (int, float) or not 0 < seconds < 65:
+    if (
+        type(seconds) not in (int, float)
+        or not 0 < seconds < EXAMPLE_SERVICE_TIMEOUT_SECONDS
+    ):
         raise ValueError("invalid matrix request deadline")
     previous_handler = signal.getsignal(signal.SIGALRM)
     if any(signal.getitimer(signal.ITIMER_REAL)):

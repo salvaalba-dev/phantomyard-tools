@@ -1,14 +1,31 @@
+import configparser
 import os
+import re
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from phantomdocs import view_matrix_broker as broker
 from phantomdocs import view_matrix_host as host
+
+
+def test_documented_service_timeout_leaves_cleanup_margin():
+    documentation = (
+        Path(__file__).resolve().parents[1] / "docs/VIEW-MATRIX.md"
+    ).read_text()
+    blocks = re.findall(r"```(?:ini)?\n(.*?)```", documentation, re.DOTALL)
+    units = [block for block in blocks if "TimeoutStartSec=" in block]
+    assert len(units) == 1
+    unit = configparser.ConfigParser(interpolation=None)
+    unit.read_string(units[0])
+    service_timeout = unit.getfloat("Service", "TimeoutStartSec")
+    assert service_timeout == host.EXAMPLE_SERVICE_TIMEOUT_SECONDS
+    assert service_timeout - host.REQUEST_DEADLINE_SECONDS >= 10
 
 
 def test_host_runs_workspace_worker_under_fixed_actor_identity(monkeypatch):
@@ -175,7 +192,7 @@ def test_host_deadline_interrupts_real_lock_wait_and_releases_prior_lock(tmp_pat
 import fcntl,os,sys
 from phantomdocs import view_matrix_host as host
 first_path,second_path=sys.argv[1:]
-host.REQUEST_DEADLINE_SECONDS=0.4
+host.REQUEST_DEADLINE_SECONDS=1.5
 host.os.geteuid=lambda:0
 host.load_config=lambda path:{}
 host.socket.socket=lambda fileno:(os.close(fileno) or object())
