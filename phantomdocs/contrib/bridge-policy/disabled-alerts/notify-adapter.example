@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""Prepared disabled launcher; install and delivery require separate authorization."""
+import os
+import sys
+
+# No activation marker is included in this preparation bundle.
+if not os.path.isfile('/etc/example-alerts/delivery-enabled'):
+    print('alert delivery disabled', file=sys.stderr)
+    raise SystemExit(78)
+
+# Preserve protocol stdin/stdout, never inherit the shared vault or caller env.
+os.execve('/usr/bin/python3', ['/usr/bin/python3', '-E', '-s', '-B', '/usr/local/lib/example-alerts/notify_adapter.py', '--runtime-config', '/etc/example-alerts/notify-runtime.json'], {'PATH': '/usr/bin:/bin', 'HOME': '/home/example-user', 'LANG': 'C.UTF-8'})
