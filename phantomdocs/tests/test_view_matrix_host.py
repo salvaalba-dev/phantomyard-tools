@@ -174,12 +174,13 @@ def test_host_deadline_interrupts_real_lock_wait_and_releases_prior_lock(tmp_pat
     code = """
 import fcntl,os,sys
 from phantomdocs import view_matrix_host as host
+first_path,second_path=sys.argv[1:]
 host.REQUEST_DEADLINE_SECONDS=0.4
 host.os.geteuid=lambda:0
 host.load_config=lambda path:{}
 host.socket.socket=lambda fileno:(os.close(fileno) or object())
 def blocked(connection,config):
-    with open(sys.argv[1],'r+') as first, open(sys.argv[2],'r+') as second:
+    with open(first_path,'r+') as first, open(second_path,'r+') as second:
         fcntl.flock(first,fcntl.LOCK_EX)
         print('FIRST_LOCK_HELD',flush=True)
         fcntl.flock(second,fcntl.LOCK_EX)
