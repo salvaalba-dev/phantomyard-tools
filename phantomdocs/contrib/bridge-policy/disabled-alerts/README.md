@@ -31,7 +31,12 @@ uses an existing numeric UID/primary GID, without account or membership changes.
 The real root path guards, configuration reader, routing, wrapper exec and 0600
 ledger remain in use. Only the provider-facing entry point is replaced with a
 synthetic transport; a rehearsal-only private network namespace also prevents
-external traffic. No Telegram or email provider is contacted.
+external traffic. This chain rehearsal does **not** call `resolve()`, read a
+persona token, invoke the real workspace mail command or perform Telegram HTTP.
+It reuses the actual runtime reader/schema and ledger, while replacing delivery.
+Adapter tests cover persona resolution and exercise provider request/receipt
+handling with mocked network/process transports, not live provider delivery.
+No Telegram or email provider is contacted.
 
 The rehearsal proves disabled starts and direct-wrapper refusal, synthetic dual
 route acknowledgements, minimal environment and UID/GID, rejection of a public
@@ -40,3 +45,14 @@ marker removal and unit cleanup. This is CI acceptance of a parametrized
 template, not verification of a particular host's accounts, paths, credentials,
 provider delivery or installed unit. Private operational configuration stays
 outside this repository.
+
+The candidate's nested delivery limits are 20 seconds for Telegram socket I/O
+and the workspace child process, 25 seconds for each transport wrapper, 55 seconds
+for the complete two-route handler, and 60 seconds for the unit. Two routes run
+sequentially; 30 seconds does not enclose two 20-second sends. Remaining margin
+covers the Result lookup, startup and ledger operations. Telegram's socket timeout
+is not an end-to-end deadline; the enclosing process limits remain necessary.
+
+Timeout after provider acceptance is still uncertain, not proof of non-delivery.
+There is no automatic retry. Review the ledger/provider state before retrying;
+`attempting` without a final receipt can follow a terminated transport process.

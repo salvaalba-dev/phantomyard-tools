@@ -105,7 +105,7 @@ def _deliver(handler, payload):
         input=json.dumps(payload),
         text=True,
         capture_output=True,
-        timeout=6,
+        timeout=25,
         check=False,
         env=delivery_environment(),
     )

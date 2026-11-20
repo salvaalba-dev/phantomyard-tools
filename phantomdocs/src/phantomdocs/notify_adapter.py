@@ -360,7 +360,7 @@ def telegram(persona, owner, recipient, message):
         urllib.request.HTTPSHandler(context=ssl.create_default_context()),
         NoRedirect(),
     )
-    with opener.open(request, timeout=5) as response:  # nosec B310 -- fixed HTTPS Telegram origin, no redirects
+    with opener.open(request, timeout=20) as response:  # nosec B310 -- fixed HTTPS Telegram origin, no redirects
         raw = response.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError("Telegram response exceeded limit")
@@ -430,7 +430,7 @@ def email(runtime, name, persona, owner, recipient, message):
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=20,
         check=False,
         env={
             "PATH": "/usr/bin:/bin",

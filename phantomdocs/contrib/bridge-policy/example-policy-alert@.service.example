@@ -6,5 +6,5 @@ Type=oneshot
 UMask=0077
 # Separate stdlib-only adapter: do not depend on the publisher's venv health.
 ExecStart=/usr/bin/python3 /opt/example-policy-alert/workflow_policy_alert.py --handler /opt/example-alert-route/deliver-policy-alert --unit %i
-TimeoutStartSec=30
+TimeoutStartSec=60
 # No recursive OnFailure. A failed delivery is not reported as a delivered alert.

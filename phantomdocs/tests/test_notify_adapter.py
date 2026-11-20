@@ -329,7 +329,7 @@ def test_telegram_uses_fixed_https_origin_and_keeps_token_out_of_request_body(
     request, options = seen[0]
     assert request.full_url == "https://api.telegram.org/bot" + token + "/sendMessage"
     assert json.loads(request.data) == {"chat_id": "10001", "text": "synthetic"}
-    assert token.encode() not in request.data and options["timeout"] == 5
+    assert token.encode() not in request.data and options["timeout"] == 20
 
 
 def test_workspace_runs_only_the_pinned_persona_tool_under_its_existing_uid(
@@ -387,7 +387,7 @@ def test_workspace_runs_only_the_pinned_persona_tool_under_its_existing_uid(
         "LANG": "C.UTF-8",
         "PHANTOMBOT_PERSONA": "resolved",
     }
-    assert "shell" not in options and options["timeout"] == 5
+    assert "shell" not in options and options["timeout"] == 20
 
 
 @pytest.mark.parametrize(

@@ -201,7 +201,7 @@ def test_real_systemd_writer_closure_recovery_drift_and_alert_delivery():
         try:
             install(
                 alert_template,
-                f"[Service]\nType=oneshot\nExecStart=/usr/bin/python3 {adapter} --handler {handler} --unit %i\nTimeoutStartSec=30\n",
+                f"[Service]\nType=oneshot\nExecStart=/usr/bin/python3 {adapter} --handler {handler} --unit %i\nTimeoutStartSec=60\n",
             )
             install(
                 names["bridge"],

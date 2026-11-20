@@ -305,7 +305,7 @@ def test_alert_uses_bounded_shell_free_delivery_and_requires_a_receipt(monkeypat
     )
     args, kw = seen[0]
     assert (
-        args == (["/protected/handler"],) and kw["timeout"] == 20 and "shell" not in kw
+        args == (["/protected/handler"],) and kw["timeout"] == 55 and "shell" not in kw
     )
     assert json.loads(kw["input"]) == {
         "schema_version": 1,
