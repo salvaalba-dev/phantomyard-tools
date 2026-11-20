@@ -173,8 +173,10 @@ its transport wrapper; do not guess options or broaden credential access.
 The version-controlled [persona-aware notify adapter](NOTIFY-ADAPTER.md) now
 implements direct Telegram and the reviewed workspace-send binding, plus a
 private receipt ledger. The concrete workspace interface is bound to `send <to> <subject> --body <msg>`
-and a `Message ID:` receipt line. The installed script hash and conformance to
-that binding, plus an approved real delivery probe, remain installation gates. Operational chat/mailbox
+and a `Message ID:` receipt line (written by the installed tool as
+`✅ Sent. Message ID: <value>`). The installed script hash and conformance to
+that binding, plus an approved real delivery probe, remain installation gates;
+the hash is pinned per persona, since installed copies differ. Operational chat/mailbox
 bindings belong only in private configuration, never this public repository.
 
 ## Real systemd rehearsal in disposable paths

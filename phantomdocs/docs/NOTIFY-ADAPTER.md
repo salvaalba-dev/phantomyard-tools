@@ -74,7 +74,10 @@ one fixed operational subject and preserves the recipient and body as separate
 arguments without a shell.
 
 `workspace_receipt` must be `message-id-line`: stdout must contain exactly one
-complete `Message ID: <value>` line. JSON IDs and exit success alone are refused.
+complete `Message ID: <value>` line, which the installed tool writes as
+`✅ Sent. Message ID: <value>`; the prefix is accepted, the value is kept. A
+placeholder value (`?`, printed when the provider returns no id), two receipt
+lines, JSON IDs and exit success alone are refused.
 Raw stdout/stderr are neither persisted nor forwarded. The example now contains
 these concrete arguments and receipt format, but its source hash remains an
 invalid placeholder. Pin the SHA-256 of the actual selected persona's script and
