@@ -9,6 +9,9 @@ import ast
 import hashlib
 
 SOURCE_SHA256 = "925efb3243ac025410b3df2941fac4128e91c94a7e745a6bb518557b528e9a59"
+POLICY_SOURCE_SHA256 = (
+    "fa54dd4192f5f090422628d407bfbd05a0de3f6d85b1be7c9e3c5bc949198f74"
+)
 IMPORT_ANCHOR = "from trusted_handoff import DaemonPeerPolicy\n"
 CLASS_ANCHOR = "\n\nclass PublishedReader:\n"
 GATE_ANCHOR = (
@@ -21,10 +24,10 @@ PARAM_ANCHOR = "                 additional_issuers=None, reviewed_knowledge=Non
 
 def patch_reader(source):
     """Return a candidate preserving the existing reader's projection and UI."""
-    if (
-        not isinstance(source, bytes)
-        or hashlib.sha256(source).hexdigest() != SOURCE_SHA256
-    ):
+    if not isinstance(source, bytes) or hashlib.sha256(source).hexdigest() not in {
+        SOURCE_SHA256,
+        POLICY_SOURCE_SHA256,
+    }:
         raise ValueError("Unsupported PhantomView reader revision")
     text = source.decode("utf-8")
     newline = "\r\n" if "\r\n" in text else "\n"

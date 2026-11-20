@@ -88,6 +88,11 @@ def validate_reader(candidate, settings):
     import pwd
 
     config = json.loads(candidate, object_pairs_hook=_unique)
+    if (
+        config.get("schema_version") == 2
+        and config.get("policy_lock") != settings["policy_lock"]
+    ):
+        raise ValueError("reader and supervisor policy locks differ")
     account = pwd.getpwuid(config["reader_uid"])
     if account.pw_uid <= 0:
         raise ValueError("Unprivileged reader required")

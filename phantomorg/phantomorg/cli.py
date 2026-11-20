@@ -2211,6 +2211,9 @@ def update_cmd(check, force, repo_override):
 @click.option("--resolver", required=True)
 @click.option("--node", default="/usr/bin/node", show_default=True)
 @click.option("--unit", required=True)
+@click.option(
+    "--commit-witness", is_flag=True, help="Commit a source receipt in the common lock"
+)
 def publish_policy_cmd(**options):
     """Publish a reviewed model through the protected PhantomDocs transaction.
 

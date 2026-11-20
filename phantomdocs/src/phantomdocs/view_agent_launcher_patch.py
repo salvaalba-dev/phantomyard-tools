@@ -8,6 +8,9 @@ import ast
 import hashlib
 
 SOURCE_SHA256 = "f449aaf8ecc259a645e08c9c53ff34188255f766c76b9248e94fa3f323ac2883"
+POLICY_SOURCE_SHA256 = (
+    "e37b91c4e6a37f09ac6fa8a840eb219de75d95c777b408809c1c5125e475973a"
+)
 FIELDS_ANCHOR = "(FIELDS | {'additional_issuers', 'reviewed_knowledge'})"
 RETURN_ANCHOR = "    return result\n\n\ndef issuer_routes(config):\n"
 BUILD_ANCHOR = (
@@ -18,20 +21,30 @@ BUILD_ANCHOR = (
 
 def patch_launcher(source):
     """Return a launcher candidate that accepts trusted agent route names."""
-    if (
-        not isinstance(source, bytes)
-        or hashlib.sha256(source).hexdigest() != SOURCE_SHA256
-    ):
+    if not isinstance(source, bytes) or hashlib.sha256(source).hexdigest() not in {
+        SOURCE_SHA256,
+        POLICY_SOURCE_SHA256,
+    }:
         raise ValueError("Unsupported PhantomView launcher revision")
     text = source.decode("utf-8")
     newline = "\r\n" if "\r\n" in text else "\n"
     text = text.replace("\r\n", "\n")
-    for anchor in (FIELDS_ANCHOR, RETURN_ANCHOR, BUILD_ANCHOR):
+    policy = hashlib.sha256(source).hexdigest() == POLICY_SOURCE_SHA256
+    fields = (
+        "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'policy_lock'})"
+        if policy
+        else FIELDS_ANCHOR
+    )
+    for anchor in (fields, RETURN_ANCHOR, BUILD_ANCHOR):
         if text.count(anchor) != 1:
             raise ValueError("Launcher composition changed")
     text = text.replace(
-        FIELDS_ANCHOR,
-        "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors'})",
+        fields,
+        (
+            "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'policy_lock', 'agent_actors'})"
+            if policy
+            else "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors'})"
+        ),
         1,
     )
     text = text.replace(

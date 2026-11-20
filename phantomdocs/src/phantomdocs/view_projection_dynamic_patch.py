@@ -7,6 +7,10 @@ _DIGESTS = {
     "reader_launch.py": "23b2c4b45ea25c3b8979b3708201443d8476e23192e32c9f613aeb13d599469f",
     "identified_reader.py": "a91a3a20627010dce7ecba5b885337f06b0f3ccab06e9ba60796ba0cd67231f8",
 }
+_POLICY_DIGESTS = {
+    "reader_launch.py": "f8cbd93c45053670bf8fdbcf02429b03c6a6c4eccf49aaf553a0e20373f3aa46",
+    "identified_reader.py": "18980f0d0726be8c7cbb2282400c057fbc2467f78731b8ea954775bac002060f",
+}
 _OLD = "from projection_review import PublishedProjection\n"
 _NEW = (
     "import projection_review as _projection_review\n"
@@ -20,7 +24,8 @@ def patch_projection_consumer(name, source):
     if (
         name not in _DIGESTS
         or not isinstance(source, bytes)
-        or hashlib.sha256(source).hexdigest() != _DIGESTS[name]
+        or hashlib.sha256(source).hexdigest()
+        not in {_DIGESTS[name], _POLICY_DIGESTS[name]}
     ):
         raise ValueError("Unsupported viewer source revision")
     text = source.decode("utf-8")

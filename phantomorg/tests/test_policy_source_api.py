@@ -81,11 +81,13 @@ def test_publish_command_delegates_once_without_persona_work(monkeypatch):
             "/resolver",
             "--unit",
             "bridge.service",
+            "--commit-witness",
         ],
     )
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert calls[0]["destination"] == ("/bridge", "/docs")
+    assert calls[0]["commit_witness"] is True
     assert "restarted" in result.output
 
 
