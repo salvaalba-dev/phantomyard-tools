@@ -131,6 +131,11 @@ and file durability use ordinary fsync descriptors, not O_PATH descriptors.
 A timeout, invalid provider reply, process death or failure to persist the final
 receipt can follow a real delivery. An `attempting` row without a final record is
 therefore uncertain. There are no automatic retries or exactly-once claims.
+The provider limits are 20 seconds (Telegram socket I/O and workspace subprocess),
+inside a 25-second transport wrapper limit, a 55-second two-route handler limit
+and a 60-second example unit limit. The routes run sequentially. Socket timeouts
+are not total request deadlines; an enclosing process can still be terminated
+before final ledger persistence.
 Review the ledger/provider state before retrying. A failed ledger intent prevents
 the network request; a failed final ledger write prevents a successful adapter
 acknowledgement even if delivery already happened.

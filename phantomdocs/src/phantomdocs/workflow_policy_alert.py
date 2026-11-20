@@ -75,7 +75,7 @@ def notify(handler, unit, *, probe=False):
         input=json.dumps(event),
         text=True,
         capture_output=True,
-        timeout=20,
+        timeout=55,
         check=False,
         env=delivery_environment(),
     )

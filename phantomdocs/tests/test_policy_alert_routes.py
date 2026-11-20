@@ -1,11 +1,48 @@
 """Direct destinations, mandatory email trace and no accidental group broadcast."""
 
+import json
+import subprocess
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from phantomdocs import workflow_policy_alert_routes as routes
+
+
+def test_transport_timeout_still_attempts_archival_email(config, monkeypatch):
+    seen = []
+    monkeypatch.setattr(routes, "protected_handler", lambda _: None)
+
+    def run(argv, **options):
+        payload = json.loads(options["input"])
+        seen.append(payload["channel"])
+        assert options["timeout"] == 25
+        if payload["channel"] == "telegram":
+            raise subprocess.TimeoutExpired(argv, options["timeout"])
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "delivered": True,
+                    "recipient": payload["recipient"],
+                    "receipt": "synthetic:accepted",
+                }
+            ),
+        )
+
+    monkeypatch.setattr(routes.subprocess, "run", run)
+    with pytest.raises(ValueError, match="telegram"):
+        routes.route(
+            config,
+            {
+                "schema_version": 1,
+                "kind": "policy-unit-failed",
+                "unit": "collect.service",
+            },
+            state="unknown",
+        )
+    assert seen == ["telegram", "email"]
 
 
 @pytest.fixture

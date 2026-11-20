@@ -12,6 +12,6 @@ Environment=PATH=/usr/bin:/bin HOME=/home/example-user LANG=C.UTF-8
 UnsetEnvironment=PHANTOMBOT_PERSONA PYTHONPATH PYTHONHOME
 WorkingDirectory=/usr/local/lib/example-alerts
 ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin HOME=/home/example-user LANG=C.UTF-8 /usr/bin/python3 -E -s -B /usr/local/lib/example-alerts/workflow_policy_alert.py --handler /usr/local/lib/example-alerts/deliver-policy-alert --unit %i
-TimeoutStartSec=30
+TimeoutStartSec=60
 NoNewPrivileges=yes
 # No recursive OnFailure, retries, timers, dependencies or [Install] section.
