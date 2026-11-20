@@ -95,6 +95,49 @@ def read_file(path, owner, *, private=False, optional=False):
         raise
 
 
+def read_runtime_config(path):
+    """Read root-controlled metadata, separately from 0600 persona secrets.
+
+    A 0640 profile must belong to the caller's effective primary group. Root
+    operators may also use root-owned 0600 profiles. Ancestors remain root-owned
+    and protected; this reader never changes ownership, modes, ACLs or groups.
+    """
+    path = Path(path)
+    with directory(path.parent, 0) as parent:
+        fd = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent,
+        )
+        try:
+            before = os.fstat(fd)
+            mode = stat.S_IMODE(before.st_mode)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != 0
+                or before.st_nlink != 1
+                or mode not in (0o600, 0o640)
+                or mode == 0o640
+                and before.st_gid != os.getegid()
+            ):
+                raise ValueError("unprotected root-owned runtime configuration")
+            raw = os.read(fd, MAX_BYTES + 1)
+            after = os.fstat(fd)
+            named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            identity = tuple(getattr(before, key) for key in fields)
+            if (
+                len(raw) > MAX_BYTES
+                or len(raw) != before.st_size
+                or identity != tuple(getattr(after, key) for key in fields)
+                or identity != tuple(getattr(named, key) for key in fields)
+            ):
+                raise ValueError("runtime configuration changed or exceeded limit")
+            return json.loads(raw)
+        finally:
+            os.close(fd)
+
+
 def select_persona(explicit, environment, state, config, available):
     """Do not skip a stated-but-invalid choice or invent a default persona."""
     for value in (
@@ -473,7 +516,7 @@ def main():
     if tomllib is None:
         parser.error("notify adapter requires Python 3.11 or newer")
     try:
-        runtime = json.loads(read_file(args.runtime_config, os.geteuid(), private=True))
+        runtime = read_runtime_config(args.runtime_config)
         raw = sys.stdin.read(8193)
         if len(raw) > 8192:
             raise ValueError("oversized notification")

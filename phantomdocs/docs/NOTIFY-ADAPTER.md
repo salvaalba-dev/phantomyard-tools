@@ -39,6 +39,28 @@ not the environment of a failed unit or a previous terminal session. Missing
 configuration must be resolved explicitly before activation; do not assume a
 systemd instance automatically inherits an interactive persona selection.
 
+## Root-controlled runtime configuration
+
+The runtime JSON is metadata, not a credential store. Its dedicated reader
+requires root ownership on the file and every ancestor, with no group/other
+directory write bits. A service can read a root-owned **0640** profile only when
+the file group is its effective primary group. Supplementary-group access alone
+does not qualify. Root operators can also read root-owned **0600** profiles.
+Public-readable, group-writable, special-bit, linked, oversized or concurrently
+replaced files are refused. The reader never repairs permissions or ownership.
+
+During a separately authorized installation, keep code/wrappers under a protected
+root-owned directory such as `/usr/local/lib/example-alerts/` (0755). Runtime
+profiles can live under `/etc/example-alerts/` (root:existing-service-group 0750),
+with root:existing-service-group 0640 files. Use only the selected service's
+existing primary group; do not add memberships or relax access to persona data.
+The root-controlled route configuration and executable checks remain separate.
+
+Telegram credentials and ledger files retain their independent exact **0600**
+checks. A private ledger directory can be owned by the existing service identity
+with mode 0700. Runtime group readability never permits group-readable tokens
+or ledger rows. These are preparation rules, not an instruction to modify a host.
+
 ## Direct Telegram
 
 The adapter reads only `personas/<resolved>/config.toml`, requires mode **0600**,
@@ -122,8 +144,12 @@ and a ledger attempt reference only after the real provider receipt is persisted
 Portable tests use synthetic persona selections, tokens, payloads and mocked
 network/process transports. Linux tests exercise actual protected credential
 reads, persona existence, concurrent JSONL writes, fsync, mode and symlink refusal
-in generated `/var/lib/notify-adapter-*` paths, without sending messages. Both
-privileged workflows include those filesystem tests.
+in generated `/var/lib/notify-adapter-*` paths, without sending messages. They
+also drop to an existing numeric UID/primary GID to verify root-owned 0640
+profiles and all refusal boundaries without changing accounts or memberships.
+Both privileged workflows include those filesystem tests. The opt-in systemd
+job starts a disposable unprivileged service to read the same profile, then
+confirms it fails when that synthetic profile becomes publicly readable.
 
 Before installation: review the concrete workspace command/output and execution
 context, run Linux/systemd CI, review private destination/runtime configuration

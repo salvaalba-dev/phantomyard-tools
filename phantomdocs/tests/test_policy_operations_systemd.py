@@ -19,6 +19,10 @@ from pathlib import Path
 
 import pytest
 from source_publication_fixture import model
+from test_notify_adapter_linux import root as root  # noqa: PLC0414 -- pytest fixture
+from test_notify_adapter_linux import (
+    root_profile as root_profile,  # noqa: PLC0414 -- pytest fixture
+)
 
 from phantomdocs.workflow_policy_operations import MODULE
 from phantomdocs.workflow_policy_sync import policy_permissions
@@ -27,6 +31,67 @@ ENABLED = os.environ.get("PHANTOM_POLICY_SYSTEMD_TRIAL") == "1"
 pytestmark = pytest.mark.skipif(
     not ENABLED, reason="explicit disposable root/systemd rehearsal required"
 )
+
+
+def test_real_service_reads_root_owned_runtime_as_the_existing_unprivileged_uid(
+    root_profile,
+):
+    assert sys.platform == "linux" and os.geteuid() == 0
+    assert Path("/proc/1/comm").read_text().strip() == "systemd"
+    code, profile = root_profile
+    script = code / "read_runtime.py"
+    script.write_text(
+        "import sys\nfrom notify_adapter import read_runtime_config\n"
+        "assert read_runtime_config(sys.argv[1]) == {'profile':'synthetic-root-controlled'}\n"
+    )
+    name = "pd-policy-runtime-" + uuid.uuid4().hex + ".service"
+    unit = Path("/run/systemd/system") / name
+
+    def ctl(*args):
+        return subprocess.run(
+            ["/usr/bin/systemctl", "--no-pager", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+    assert not unit.exists()
+    with unit.open("x") as stream:
+        stream.write(
+            "[Service]\nType=oneshot\nUser=65534\nGroup=65534\nNoNewPrivileges=yes\n"
+            f"ExecStart=/usr/bin/python3 -B {script} {profile}\nTimeoutStartSec=15\n"
+        )
+    try:
+        assert ctl("daemon-reload").returncode == 0
+        started = ctl("start", name)
+        assert started.returncode == 0, started.stderr
+        assert (
+            ctl("show", name, "--property=Result", "--value").stdout.strip()
+            == "success"
+        )
+        before = profile.stat()
+        assert (
+            before.st_uid == 0
+            and before.st_gid == 65534
+            and before.st_mode & 0o777 == 0o640
+        )
+        # The service must fail rather than silently accepting public metadata.
+        profile.chmod(0o644)
+        assert ctl("start", name).returncode != 0
+        assert (
+            ctl("show", name, "--property=Result", "--value").stdout.strip()
+            == "exit-code"
+        )
+        assert profile.stat().st_mode & 0o777 == 0o644
+    finally:
+        ctl("stop", name)
+        ctl("reset-failed", name)
+        assert unit.parent == Path("/run/systemd/system") and unit.name.startswith(
+            "pd-policy-runtime-"
+        )
+        unit.unlink()
+        ctl("daemon-reload")
 
 
 def test_real_systemd_writer_closure_recovery_drift_and_alert_delivery():
