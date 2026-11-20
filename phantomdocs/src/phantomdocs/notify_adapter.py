@@ -427,7 +427,6 @@ class IPv4FirstHTTPSHandler(urllib.request.HTTPSHandler):
             IPv4FirstHTTPSConnection,
             request,
             context=self._context,
-            check_hostname=self._check_hostname,
         )
 
 
