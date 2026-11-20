@@ -37,5 +37,6 @@ The rehearsal proves disabled starts and direct-wrapper refusal, synthetic dual
 route acknowledgements, minimal environment and UID/GID, rejection of a public
 runtime file, user-owned routing parent and non-root transport wrapper, then
 marker removal and unit cleanup. This is CI acceptance of a parametrized
-template, not verification of a particular host's accounts, paths, credentials,+provider delivery or installed unit. Private operational configuration stays
+template, not verification of a particular host's accounts, paths, credentials,
+provider delivery or installed unit. Private operational configuration stays
 outside this repository.
