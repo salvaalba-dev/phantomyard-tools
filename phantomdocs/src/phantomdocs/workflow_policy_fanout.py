@@ -102,8 +102,20 @@ def ensure_independent(paths):
         raise ValueError("policy files must be independent")
 
 
-def make_record(*, source, paths, payload, old, unit, resolver, node, active, changed):
-    return {
+def make_record(
+    *,
+    source,
+    paths,
+    payload,
+    old,
+    unit,
+    resolver,
+    node,
+    active,
+    changed,
+    commit_witness=False,
+):
+    record = {
         "kind": KIND,
         "source": source,
         "source_sha256": digest(payload),
@@ -121,9 +133,14 @@ def make_record(*, source, paths, payload, old, unit, resolver, node, active, ch
             for path, data in zip(paths, old, strict=True)
         ],
     }
+    if commit_witness:
+        record["commit_witness"] = True
+    return record
 
 
-def verify_record(record, *, source, paths, payload, old, unit, resolver, node):
+def verify_record(
+    record, *, source, paths, payload, old, unit, resolver, node, commit_witness=False
+):
     """Only retry this exact transaction, content states and permission baseline."""
     fields = {
         "kind",
@@ -136,6 +153,8 @@ def verify_record(record, *, source, paths, payload, old, unit, resolver, node):
         "restart",
         "destinations",
     }
+    if commit_witness:
+        fields.add("commit_witness")
     if (
         not isinstance(record, dict)
         or set(record) != fields
@@ -145,6 +164,7 @@ def verify_record(record, *, source, paths, payload, old, unit, resolver, node):
         or record["unit"] != unit
         or record["resolver"] != resolver
         or record["node"] != node
+        or (commit_witness and record.get("commit_witness") is not True)
         or type(record["resume"]) is not bool
         or type(record["restart"]) is not bool
         or (record["restart"] and not record["resume"])

@@ -10,6 +10,11 @@ from contextlib import nullcontext
 from . import workflow_phantomorg_candidate as source_publication
 from . import workflow_policy_fanout as fanout
 from .workflow_admission_config import parse_policy
+from .workflow_policy_commit import (
+    inspect_committed_locked,
+    receipt,
+    write_committed_locked,
+)
 from .workflow_policy_guard import policy_guard
 from .workflow_policy_sync import (
     MAX_BYTES,
@@ -124,6 +129,7 @@ def refresh(
     expected_source_sha256=None,
     candidate_sha256=None,
     organization=None,
+    commit_witness=False,
 ):
     """Publish all snapshots under one policy lock; retry only our own journal.
 
@@ -153,10 +159,18 @@ def refresh(
             active = False if prestart else _systemctl("is-active", unit)
             # Recovery is confined to the strictly validated fanout record.
             # A marker from the legacy two-file publisher is never adopted here.
-            with policy_guard(lock_path, exclusive=True, recovering=True):
+            with policy_guard(
+                lock_path, exclusive=True, recovering=True
+            ) as committed_mode:
+                commit_witness = commit_witness or bool(committed_mode)
                 record = fanout.read_pending(lock_path)
                 inherited = record is not None
                 reject_candidate = candidate is not None and not inherited
+                committed = (
+                    inspect_committed_locked(lock_path, source)
+                    if commit_witness and not inherited
+                    else None
+                )
                 identities = [source, lock_path, lock_path + ".publisher", *paths]
                 if candidate is not None and not inherited:
                     identities.append(candidate)
@@ -170,6 +184,7 @@ def refresh(
                     "unit": unit,
                     "resolver": resolver,
                     "node": node,
+                    "commit_witness": commit_witness,
                 }
                 source_record = (
                     inherited and record.get("kind") == source_publication.KIND
@@ -206,12 +221,20 @@ def refresh(
                     target = before
                     if organization is not None:
                         source_publication.source_identity(before, organization)
+                if commit_witness:
+                    receipt(
+                        source, target
+                    )  # reject unrepresentable receipts before live writes
                 current, previous = _derive_both(
                     target, target if prestart else old[0], node=node, resolver=resolver
                 )
                 changed = current != previous
                 if record is None:
-                    if before == target and all(data == target for data in old):
+                    if (
+                        before == target
+                        and all(data == target for data in old)
+                        and (not commit_witness or committed == receipt(source, target))
+                    ):
                         return "synchronized"
                     if candidate is not None:
                         record = source_publication.make_record(
@@ -270,6 +293,8 @@ def refresh(
                     # A nested bridge ExecStartPre must not erase the outer
                     # publisher's restart intent before systemctl start returns.
                     if not (prestart and inherited):
+                        if commit_witness:
+                            write_committed_locked(lock_path, source, target)
                         published = True
                         fanout.clear_pending(lock_path, record)
                     return "synchronized"
@@ -280,6 +305,8 @@ def refresh(
             _systemctl("start", unit)
             with policy_guard(lock_path, exclusive=True, recovering=True):
                 _verify_copies(source, paths, target, record)
+                if commit_witness:
+                    write_committed_locked(lock_path, source, target)
                 published = True
                 fanout.clear_pending(lock_path, record)
             return "restarted"
@@ -335,6 +362,7 @@ def main():
     parser.add_argument("--expected-source-sha256")
     parser.add_argument("--candidate-sha256")
     parser.add_argument("--organization")
+    parser.add_argument("--commit-witness", action="store_true")
     args = parser.parse_args()
     print(
         refresh(
@@ -349,6 +377,7 @@ def main():
             expected_source_sha256=args.expected_source_sha256,
             candidate_sha256=args.candidate_sha256,
             organization=args.organization,
+            commit_witness=args.commit_witness,
         )
     )
 

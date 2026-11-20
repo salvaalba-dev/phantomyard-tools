@@ -79,14 +79,32 @@ def check_protected_startup(
     A caller must keep authority stable through actual startup and runtime;
     completing this check alone does not provide that guarantee.
     """
-    with policy_guard(policy_lock, exclusive=False):
-        _check_locked(org_path, config_path, journal_path, committed_path)
+    with policy_guard(policy_lock, exclusive=False) as committed_mode:
+        _check_locked(
+            org_path,
+            config_path,
+            journal_path,
+            committed_path,
+            policy_lock,
+            committed_mode,
+        )
 
 
-def _check_locked(org_path, config_path, journal_path, committed_path):
+def _check_locked(
+    org_path,
+    config_path,
+    journal_path,
+    committed_path,
+    policy_lock=None,
+    committed_mode=False,
+):
     org_bytes = _read_protected(org_path)
     config_bytes = _read_protected(config_path)
     config = json.loads(config_bytes, object_pairs_hook=_unique)
+    if committed_mode and config.get("schema_version") != 2:
+        raise ValueError("committed policy requires the current reader contract")
+    if config.get("schema_version") == 2 and config.get("policy_lock") != policy_lock:
+        raise ValueError("reader and launcher policy locks differ")
     check_startup(
         parse_policy(org_bytes),
         config,
@@ -107,8 +125,15 @@ def launch_protected(
     """
     if not callable(start_and_wait):
         raise TypeError("Trusted launcher required")
-    with policy_guard(policy_lock, exclusive=False):
-        _check_locked(org_path, config_path, journal_path, committed_path)
+    with policy_guard(policy_lock, exclusive=False) as committed_mode:
+        _check_locked(
+            org_path,
+            config_path,
+            journal_path,
+            committed_path,
+            policy_lock,
+            committed_mode,
+        )
         return start_and_wait()
 
 

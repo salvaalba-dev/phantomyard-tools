@@ -1,5 +1,8 @@
 # PhantomOrg source publication through the common fanout
 
+The local [committed-source receipt follow-up](POLICY-COMMIT-RECEIPT.md) binds
+cooperating reader requests to the completed fanout without granting source access.
+
 Status: local integration candidate, based on the merged PR #67. No installation
 or activation is implied. PhantomOrg owns model validation; the existing
 PhantomDocs publisher owns the protected transaction and service orchestration.

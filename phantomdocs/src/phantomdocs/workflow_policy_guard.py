@@ -4,8 +4,10 @@ This lock protects a policy only if *every* process that can replace or edit it
 acquires the exclusive lock. Privileged manual edits are not prevented.
 """
 
+import json
 import os
 import stat
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -15,10 +17,14 @@ class PolicyRecoveryRequired(ValueError):
 
 
 @contextmanager
-def policy_guard(lock_path, *, exclusive, recovering=False):
+def policy_guard(lock_path, *, exclusive, recovering=False, timeout=None):
     """Serialize policy use; only explicit exclusive recovery may bypass pending."""
     if recovering and not exclusive:
         raise ValueError("policy recovery requires an exclusive lock")
+    if timeout is not None and (
+        type(timeout) not in (int, float) or not 0 < timeout <= 60
+    ):
+        raise ValueError("invalid policy lock timeout")
     import fcntl
 
     # Never create or replace the lock: that can split the lock domain. Each
@@ -51,8 +57,32 @@ def policy_guard(lock_path, *, exclusive, recovering=False):
                 or info.st_nlink != 1
             ):
                 raise ValueError("policy lock is not protected")
-            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            if timeout is None:
+                fcntl.flock(fd, operation)
+            else:
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        fcntl.flock(fd, operation | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("policy lock unavailable") from None
+                        time.sleep(min(0.01, max(0, deadline - time.monotonic())))
             try:
+                # Once installed, the receipt protocol cannot be silently
+                # disabled by omitting a CLI flag or invoking an ordinary writer.
+                try:
+                    receipt = json.loads(os.pread(fd, 8193, 0))
+                    committed = (
+                        isinstance(receipt, dict)
+                        and receipt.get("kind") == "phantomorg-committed-source-v1"
+                    )
+                except (ValueError, UnicodeError):
+                    committed = False
+                if exclusive and committed and not recovering:
+                    raise PolicyRecoveryRequired("use the committed policy publisher")
                 if not recovering:
                     try:
                         os.stat(
@@ -66,7 +96,7 @@ def policy_guard(lock_path, *, exclusive, recovering=False):
                         raise PolicyRecoveryRequired(
                             "policy publication requires recovery"
                         )
-                yield
+                yield committed
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:

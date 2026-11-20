@@ -5,6 +5,12 @@ import hashlib
 
 READER_SHA256 = "2d2c47fac359fe5ca5eaa1801daf3ca1d23d70fb0ec8e5d82ca12a08b5e3a937"
 LAUNCHER_SHA256 = "5b6337a1abd1fa23243cced88edb9f73ab453cffd676c7dfed599dc74fa63494"
+POLICY_READER_SHA256 = (
+    "dfe6ea0a0077d4aa107ed368fca2d0fd8ffcec42fafe9289d9a07c2917dde4f0"
+)
+POLICY_LAUNCHER_SHA256 = (
+    "ab8f35c20c4b68e3fc16c60a0ba248ae465af730903b278dc50ef21519b4769c"
+)
 
 
 def _replace(source, digest, replacements):
@@ -23,9 +29,13 @@ def _replace(source, digest, replacements):
 
 def patch_reader(source):
     """Return a reader candidate; never modify a running release."""
+    policy = (
+        isinstance(source, bytes)
+        and hashlib.sha256(source).hexdigest() == POLICY_READER_SHA256
+    )
     return _replace(
         source,
-        READER_SHA256,
+        POLICY_READER_SHA256 if policy else READER_SHA256,
         [
             (
                 "from phantomdocs.view_agent_gate import AgentGateMixin\n",
@@ -57,9 +67,13 @@ def patch_reader(source):
 
 def patch_launcher(source):
     """Return a launcher candidate accepting reviewed mixed signers."""
+    policy = (
+        isinstance(source, bytes)
+        and hashlib.sha256(source).hexdigest() == POLICY_LAUNCHER_SHA256
+    )
     return _replace(
         source,
-        LAUNCHER_SHA256,
+        POLICY_LAUNCHER_SHA256 if policy else LAUNCHER_SHA256,
         [
             (
                 "from trusted_handoff import DaemonPeerPolicy\n",
@@ -69,8 +83,16 @@ def patch_launcher(source):
                 ),
             ),
             (
-                "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors'})",
-                "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors', 'mixed_agent_signers'})",
+                (
+                    "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'policy_lock', 'agent_actors'})"
+                    if policy
+                    else "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors'})"
+                ),
+                (
+                    "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'policy_lock', 'agent_actors', 'mixed_agent_signers'})"
+                    if policy
+                    else "(FIELDS | {'additional_issuers', 'reviewed_knowledge', 'agent_actors', 'mixed_agent_signers'})"
+                ),
             ),
             (
                 "    return result\n\n\ndef issuer_routes(config):\n",
