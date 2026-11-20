@@ -31,4 +31,4 @@ jobs:
           sudo "$trial_root/venv/bin/python" -m pip install --quiet '.[dev]' ../phantomorg
           sudo env PHANTOM_POLICY_SYSTEMD_TRIAL=1 "PHANTOM_POLICY_TRIAL_PYTHON=$trial_root/venv/bin/python" \
             "PYTHONPATH=$PWD/src:$PWD/tests" PYTHONDONTWRITEBYTECODE=1 \
-            "$trial_root/venv/bin/python" -m pytest tests/test_policy_operations_systemd.py tests/test_notify_adapter_linux.py -v
+            "$trial_root/venv/bin/python" -m pytest tests/test_policy_operations_systemd.py tests/test_notify_adapter_linux.py tests/test_disabled_alert_systemd.py -v

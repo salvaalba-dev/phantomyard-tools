@@ -1,0 +1,17 @@
+[Unit]
+Description=Deliver policy failure alerts using the existing service identity
+# Disabled until a separately authorized installation and delivery acceptance.
+ConditionPathExists=/etc/example-alerts/delivery-enabled
+
+[Service]
+Type=oneshot
+User=example-user
+Group=example-user
+UMask=0077
+Environment=PATH=/usr/bin:/bin HOME=/home/example-user LANG=C.UTF-8
+UnsetEnvironment=PHANTOMBOT_PERSONA PYTHONPATH PYTHONHOME
+WorkingDirectory=/usr/local/lib/example-alerts
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin HOME=/home/example-user LANG=C.UTF-8 /usr/bin/python3 -E -s -B /usr/local/lib/example-alerts/workflow_policy_alert.py --handler /usr/local/lib/example-alerts/deliver-policy-alert --unit %i
+TimeoutStartSec=30
+NoNewPrivileges=yes
+# No recursive OnFailure, retries, timers, dependencies or [Install] section.
