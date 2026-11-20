@@ -71,3 +71,9 @@ The receipt is durable current-state evidence, not policy history. Do not restor
 an old/empty lock backup, replace its inode, delete pending, or roll back grants
 after partial publication. Matching forward recovery must finish first. Old code
 that ignores this protocol is not a supported automatic rollback after activation.
+
+Read-only Linux path checks pin ancestor directories with `O_PATH`, so an
+existing traversal-only directory ACL is sufficient. They still reject symlinks,
+non-root ownership and writable ancestors, and require read access to the final
+file. Writer directory descriptors retain ordinary opens for directory fsync.
+No directory listing permission or ACL expansion is required.

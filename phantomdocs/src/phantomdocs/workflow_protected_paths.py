@@ -6,13 +6,17 @@ from contextlib import contextmanager
 
 
 @contextmanager
-def protected_parent(path):
+def protected_parent(path, *, search_only=False):
     if not isinstance(path, str) or not path.startswith("/") or "\x00" in path:
         raise ValueError("absolute path required")
     parts = path.split("/")[1:]
     if len(parts) < 2 or any(part in ("", ".", "..") for part in parts):
         raise ValueError("unsafe path")
-    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    # Linux O_PATH needs traversal, not directory listing permission. Writers
+    # keep ordinary directory descriptors because they must fsync them.
+    access = os.O_PATH if search_only else os.O_RDONLY
+    flags = access | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("/", flags)
     try:
         for part in parts[:-1]:
             info = os.fstat(fd)
@@ -20,7 +24,7 @@ def protected_parent(path):
                 raise ValueError("unprotected parent directory")
             next_fd = os.open(
                 part,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                flags,
                 dir_fd=fd,
             )
             os.close(fd)
