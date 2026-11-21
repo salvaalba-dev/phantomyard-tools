@@ -18,7 +18,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_overlay_loader_with_real_systemd_and_contended_lock():
+@pytest.mark.parametrize("deadline,unit_timeout", [(1, 5), (55, 65)])
+def test_overlay_loader_with_real_systemd_and_contended_lock(deadline, unit_timeout):
     import fcntl
 
     assert sys.platform == "linux" and os.geteuid() == 0
@@ -71,7 +72,7 @@ def test_overlay_loader_with_real_systemd_and_contended_lock():
             "        fcntl.flock(b, fcntl.LOCK_EX)\n"
             "def trace(frame, event, arg):\n"
             f'    if event == "call" and frame.f_code.co_name == "main" and frame.f_globals.get("__file__") == {str(payload)!r}:\n'
-            '        g=frame.f_globals; g["REQUEST_DEADLINE_SECONDS"]=1\n'
+            f'        g=frame.f_globals; g["REQUEST_DEADLINE_SECONDS"]={deadline}\n'
             '        g["load_config"]=lambda path: {}\n'
             '        g["socket"].socket=lambda fileno: (os.close(fileno) or object())\n'
             '        g["serve_configured"]=blocked; sys.settrace(None)\n'
@@ -84,7 +85,7 @@ def test_overlay_loader_with_real_systemd_and_contended_lock():
         assert not unit.exists()
         try:
             unit.write_text(
-                f"[Service]\nType=oneshot\nExecStart={python} -I -B {script}\nTimeoutStartSec=5\n"
+                f"[Service]\nType=oneshot\nExecStart={python} -I -B {script}\nTimeoutStartSec={unit_timeout}\n"
             )
             assert ctl("daemon-reload").returncode == 0
             with second.open("r+") as lock:
@@ -121,6 +122,10 @@ def test_overlay_rejects_writable_or_symlinked_paths():
         item.write_bytes(b"fixture")
         item.chmod(0o600)
         loader.protected(item)
+        subprocess.run(["/usr/bin/setfacl", "-m", "u:65534:rw", str(item)], check=True)
+        with pytest.raises(ValueError):
+            loader.protected(item)
+        subprocess.run(["/usr/bin/setfacl", "-b", str(item)], check=True)
         item.chmod(0o620)
         with pytest.raises(ValueError):
             loader.protected(item)

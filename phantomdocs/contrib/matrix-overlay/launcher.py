@@ -44,7 +44,10 @@ def protected_file(meta):
 
 
 def protected_package(package):
-    for parent, dirs, files in os.walk(package, followlinks=False):
+    def fail(error):
+        raise error
+
+    for parent, dirs, files in os.walk(package, followlinks=False, onerror=fail):
         for name in dirs:
             protected(Path(parent) / name, directory=True)
         for name in files:
