@@ -2,6 +2,9 @@
 
 This is a deployment candidate, not an installer. The release, config, payload
 and all their parent directories must be root-controlled before it is used.
+The baseline host and guard hashes are snapshots: imports subsequently read
+the guard by path, relying on root ownership and protected permissions. Python
+startup and transitive dependencies outside phantomdocs are not verified here.
 """
 
 import hashlib

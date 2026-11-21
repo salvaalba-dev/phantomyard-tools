@@ -18,6 +18,34 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_overlay_dropin_verifies_with_systemd():
+    repo = Path(__file__).resolve().parents[1]
+    dropin = (repo / "contrib/matrix-overlay/release-pr72.conf.example").read_text()
+    expected = (
+        "ExecStart=/opt/phantomdocs/matrix-releases/release-3ee74fe/bin/python "
+        "-I -B /usr/local/lib/phantomdocs-matrix-pr72/launcher.py"
+    )
+    assert dropin.count("ExecStart=\n") == 1
+    assert expected in dropin
+    assert "Environment=PYTHONPATH=\n" in dropin
+    with tempfile.TemporaryDirectory(
+        prefix="pd-overlay-verify-", dir="/var/lib"
+    ) as tmp:
+        unit = Path(tmp) / "pd-overlay-example.service"
+        unit.write_text(
+            "[Service]\nType=oneshot\n"
+            + dropin.replace(expected, "ExecStart=/usr/bin/python3 -I -B /dev/null")
+        )
+        result = subprocess.run(
+            ["/usr/bin/systemd-analyze", "verify", str(unit)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("deadline,unit_timeout", [(1, 5), (55, 65)])
 def test_overlay_loader_with_real_systemd_and_contended_lock(deadline, unit_timeout):
     import fcntl

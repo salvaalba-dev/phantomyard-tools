@@ -1,0 +1,6 @@
+# Review-only drop-in for phantomdocs-matrix-alma@.service.
+# Install only with a separately authorized window and verified root-owned files.
+[Service]
+Environment=PYTHONPATH=
+ExecStart=
+ExecStart=/opt/phantomdocs/matrix-releases/release-3ee74fe/bin/python -I -B /usr/local/lib/phantomdocs-matrix-pr72/launcher.py
