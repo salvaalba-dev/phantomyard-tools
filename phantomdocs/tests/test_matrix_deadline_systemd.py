@@ -1,6 +1,7 @@
 """Disposable systemd test for the matrix host deadline and real flock waits."""
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -13,13 +14,14 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("PHANTOM_POLICY_SYSTEMD_TRIAL") != "1",
+    os.environ.get("PHANTOM_POLICY_SYSTEMD_TRIAL") != "1"
+    or not os.environ.get("PHANTOM_POLICY_TRIAL_PYTHON"),
     reason="explicit disposable root/systemd rehearsal required",
 )
 
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")
-def test_manifest_checks_transitive_imports_before_running_launcher():
+def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
     repo = Path(__file__).resolve().parents[1]
     venv = Path(os.environ["PHANTOM_POLICY_TRIAL_PYTHON"]).parent.parent
     (installed_site,) = (venv / "lib").glob("python*/site-packages")
@@ -66,12 +68,39 @@ def test_manifest_checks_transitive_imports_before_running_launcher():
                 check=False,
             )
 
+        started = time.monotonic()
         captured = run("capture")
+        capture_elapsed = time.monotonic() - started
         assert captured.returncode == 0, captured.stderr
         (root / "runtime-manifest.json").write_text(captured.stdout)
         valid = run()
         assert valid.returncode == 0, valid.stderr
         assert valid.stdout.strip() == "1"
+        started = time.monotonic()
+        verified = run("verify")
+        verify_elapsed = time.monotonic() - started
+        assert verified.returncode == 0, verified.stderr
+        report = json.loads(verified.stdout)
+        assert report["hashed"] == 0 and report["reused"] > 0
+        with capsys.disabled():
+            print(
+                f"Linux manifest fixture: capture={capture_elapsed:.3f}s "
+                f"verify={verify_elapsed:.3f}s reused={report['reused']}"
+            )
+
+        replacement = site / "replacement"
+        replacement.write_bytes(dependency.read_bytes())
+        replacement.replace(dependency)
+        verified = run("verify")
+        assert verified.returncode == 0, verified.stderr
+        rehash = json.loads(verified.stdout)
+        assert rehash["hashed"] == 1
+        assert rehash["inventory_sha256"] == report["inventory_sha256"]
+        previous = dependency.stat()
+        dependency.write_text("VALUE = 2\n")
+        os.utime(dependency, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        assert "differs from approved inventory" in run().stderr
+        dependency.write_text("VALUE = 1\n")
 
         resource.write_text("changed\n")
         assert "differs from approved inventory" in run().stderr
@@ -93,6 +122,9 @@ def test_manifest_checks_transitive_imports_before_running_launcher():
         dependency.rename(site / "target.py")
         dependency.symlink_to("target.py")
         assert "differs from approved inventory" in run().stderr
+        dependency.unlink()
+        dependency.symlink_to("..", target_is_directory=True)
+        assert "ambiguous runtime link" in run().stderr
 
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")

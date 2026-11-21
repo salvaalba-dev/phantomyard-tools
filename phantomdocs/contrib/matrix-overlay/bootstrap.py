@@ -7,7 +7,6 @@ import os
 import runpy
 import stat
 import sys
-from itertools import dropwhile
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -41,11 +40,14 @@ def acl_metadata(path):
     return result
 
 
-def inventory(roots, files, absent):
+def inventory(roots, files, absent, approved=None):
     """Record every entry, including bytecode, package data and native extensions."""
     entries = {}
+    stamps = {}
+    reused = hashed = 0
 
     def record(path, recurse=False, following=frozenset()):
+        nonlocal reused, hashed
         if path in following or not path.is_absolute() or ".." in path.parts:
             raise ValueError(f"invalid runtime path: {path}")
         for parent in reversed(path.parents):
@@ -60,11 +62,12 @@ def inventory(roots, files, absent):
             "gid": meta.st_gid,
             "mode": stat.S_IMODE(meta.st_mode),
         }
-        entry["acl"] = acl_metadata(path)
         if stat.S_ISLNK(meta.st_mode):
             target = os.readlink(path)
-            parts = Path(target).parts
-            if ".." in dropwhile(lambda part: part == "..", parts):
+            parts = list(Path(target).parts)
+            while parts and parts[0] == "..":
+                parts.pop(0)
+            if not parts or ".." in parts:
                 raise ValueError(f"ambiguous runtime link: {path}")
             resolved = Path(os.path.abspath(path.parent / target))
             record(resolved, recurse=resolved.is_dir(), following=following | {path})
@@ -72,24 +75,30 @@ def inventory(roots, files, absent):
         elif stat.S_ISDIR(meta.st_mode):
             entry["type"] = "directory"
         elif stat.S_ISREG(meta.st_mode):
-            with os.fdopen(
-                os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
-            ) as stream:
-                before = os.fstat(stream.fileno())
-                if not stat.S_ISREG(before.st_mode) or stamp(meta) != stamp(before):
-                    raise ValueError(f"runtime entry changed: {path}")
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-                if stamp(before) != stamp(os.fstat(stream.fileno())):
-                    raise ValueError(f"runtime entry changed: {path}")
+            key = str(path)
+            current = stamps[key] = stamp(meta)
+            previous = approved["entries"].get(key, {}) if approved else {}
+            if (
+                previous.get("type") == "file"
+                and approved["stamps"].get(key) == current
+            ):
+                digest = previous["sha256"]
+                entry["acl"] = previous["acl"]
+                reused += 1
+            else:
+                digest = file_hash(path, current)
+                hashed += 1
             entry.update(type="file", sha256=digest)
         else:
             raise ValueError(f"unsupported runtime entry: {path}")
+        if "acl" not in entry:
+            entry["acl"] = acl_metadata(path)
         entries[path] = entry
         if recurse and entry["type"] == "directory":
             for child in sorted(path.iterdir()):
                 record(
                     child,
-                    recurse=child.is_dir() and not child.is_symlink(),
+                    recurse=True,
                     following=following,
                 )
 
@@ -109,13 +118,27 @@ def inventory(roots, files, absent):
     for path in files:
         record(path)
     return {
-        "version": 1,
+        "version": 2,
         "entries": {str(path): value for path, value in entries.items()},
-    }
+        "stamps": stamps,
+    }, {"hashed": hashed, "reused": reused}
+
+
+def file_hash(path, expected_stamp):
+    with os.fdopen(
+        os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
+    ) as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or expected_stamp != stamp(before):
+            raise ValueError(f"runtime entry changed: {path}")
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if expected_stamp != stamp(os.fstat(stream.fileno())):
+            raise ValueError(f"runtime entry changed: {path}")
+    return digest
 
 
 def stamp(meta):
-    return (
+    return [
         meta.st_dev,
         meta.st_ino,
         meta.st_uid,
@@ -124,17 +147,36 @@ def stamp(meta):
         meta.st_size,
         meta.st_mtime_ns,
         meta.st_ctime_ns,
-    )
+    ]
 
 
-def verify_manifest(path, roots, files, absent):
+def encode(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def verify_manifest(path, roots, files, absent, report=False):
     # The reviewed manifest is a separate trust input, never regenerated at service start.
     inventory((), (path,), ())
     if not stat.S_ISREG(path.lstat().st_mode):
         raise ValueError("runtime manifest must be a regular file")
     expected = json.loads(path.read_bytes())
-    if expected != inventory(roots, files, absent):
+    if (
+        not isinstance(expected, dict)
+        or expected.get("version") != 2
+        or not isinstance(expected.get("entries"), dict)
+        or not isinstance(expected.get("stamps"), dict)
+    ):
+        raise ValueError("invalid runtime manifest format")
+    actual, counts = inventory(roots, files, absent, approved=expected)
+    if expected["entries"] != actual["entries"]:
         raise ValueError("runtime manifest differs from approved inventory")
+    if not report:
+        return None
+    return {
+        **counts,
+        "inventory_sha256": hashlib.sha256(encode(actual["entries"])).hexdigest(),
+        "manifest_sha256": hashlib.sha256(encode(expected)).hexdigest(),
+    }
 
 
 def main():
@@ -156,7 +198,20 @@ def main():
         HERE / "view_matrix_host.py",
     )
     if sys.argv[1:] == ["capture"]:
-        print(json.dumps(inventory(roots, files, (ZIP_SLOT,)), sort_keys=True))
+        manifest, _ = inventory(roots, files, (ZIP_SLOT,))
+        print(encode(manifest).decode())
+    elif sys.argv[1:] == ["verify"]:
+        print(
+            encode(
+                verify_manifest(
+                    HERE / "runtime-manifest.json",
+                    roots,
+                    files,
+                    (ZIP_SLOT,),
+                    report=True,
+                )
+            ).decode()
+        )
     elif not sys.argv[1:]:
         verify_manifest(HERE / "runtime-manifest.json", roots, files, (ZIP_SLOT,))
         sys.path.extend(map(str, SITES))
