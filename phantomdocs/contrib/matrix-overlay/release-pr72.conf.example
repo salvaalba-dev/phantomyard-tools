@@ -1,5 +1,7 @@
 # Review-only drop-in for phantomdocs-matrix-alma@.service.
 # Install only with a separately authorized window and verified root-owned files.
+# If the existing release-3ee74fe.conf is retained, use zz-pr72.conf so this
+# override sorts after it. Verify effective ExecStart and all loaded drop-ins.
 [Service]
 Environment=PYTHONPATH=
 ExecStart=

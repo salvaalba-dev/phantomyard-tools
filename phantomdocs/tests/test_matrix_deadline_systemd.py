@@ -18,6 +18,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")
 def test_overlay_dropin_verifies_with_systemd():
     repo = Path(__file__).resolve().parents[1]
     dropin = (repo / "contrib/matrix-overlay/release-pr72.conf.example").read_text()
@@ -28,22 +29,48 @@ def test_overlay_dropin_verifies_with_systemd():
     assert dropin.count("ExecStart=\n") == 1
     assert expected in dropin
     assert "Environment=PYTHONPATH=\n" in dropin
+    name = "pd-overlay-verify-" + uuid.uuid4().hex + ".service"
+    unit = Path("/run/systemd/system") / name
+    directory = unit.parent / (name + ".d")
+
+    def command(*args):
+        return subprocess.run(
+            list(args), capture_output=True, text=True, timeout=30, check=False
+        )
+
     with tempfile.TemporaryDirectory(
         prefix="pd-overlay-verify-", dir="/var/lib"
     ) as tmp:
-        unit = Path(tmp) / "pd-overlay-example.service"
-        unit.write_text(
-            "[Service]\nType=oneshot\n"
-            + dropin.replace(expected, "ExecStart=/usr/bin/python3 -I -B /dev/null")
-        )
-        result = subprocess.run(
-            ["/usr/bin/systemd-analyze", "verify", str(unit)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
+        launcher = Path(tmp) / "launcher.py"
+        launcher.write_text("pass\n")
+        assert launcher.is_file()
+        actual = f"ExecStart=/usr/bin/python3 -I -B {launcher}"
+        assert not unit.exists() and not directory.exists()
+        try:
+            unit.write_text("[Service]\nType=oneshot\nExecStart=/usr/bin/false\n")
+            directory.mkdir(mode=0o755)
+            (directory / "release-3ee74fe.conf").write_text(
+                "[Service]\nExecStart=\nExecStart=/usr/bin/false\n"
+            )
+            (directory / "zz-pr72.conf").write_text(dropin.replace(expected, actual))
+            result = command("/usr/bin/systemd-analyze", "verify", str(unit))
+            assert result.returncode == 0, result.stderr
+            assert command("/usr/bin/systemctl", "daemon-reload").returncode == 0
+            result = command(
+                "/usr/bin/systemctl", "show", name, "--property=ExecStart", "--value"
+            )
+            assert result.returncode == 0, result.stderr
+            assert (
+                str(launcher) in result.stdout and "/usr/bin/false" not in result.stdout
+            )
+            assert "-I -B" in result.stdout
+        finally:
+            for item in ("release-3ee74fe.conf", "zz-pr72.conf"):
+                (directory / item).unlink(missing_ok=True)
+            if directory.exists():
+                directory.rmdir()
+            unit.unlink(missing_ok=True)
+            command("/usr/bin/systemctl", "daemon-reload")
 
 
 @pytest.mark.parametrize("deadline,unit_timeout", [(1, 5), (55, 65)])
