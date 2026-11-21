@@ -3,8 +3,8 @@
 This is a deployment candidate, not an installer. The release, config, payload
 and all their parent directories must be root-controlled before it is used.
 The baseline host and guard hashes are snapshots: imports subsequently read
-the guard by path, relying on root ownership and protected permissions. Python
-startup and transitive dependencies outside phantomdocs are not verified here.
+the guard by path, relying on root ownership and protected permissions. The
+service runs this launcher through bootstrap.py's runtime manifest check.
 """
 
 import hashlib
@@ -84,7 +84,11 @@ def run(base, package, payload, config, host_hash, guard_hash, payload_hash):
     protected(base / "bin", directory=True)
     protected(Path(sys.executable).resolve())
     protected_package(package)
-    if Path(sys.prefix).resolve() != base.resolve():
+    if sys.flags.no_site:
+        correct_python = Path(sys.executable) == Path("/usr/bin/python3.12")
+    else:
+        correct_python = Path(sys.prefix).resolve() == base.resolve()
+    if not correct_python:
         raise ValueError("unexpected matrix interpreter")
     checked_bytes(package / "view_matrix_host.py", host_hash)
     checked_bytes(package / "workflow_policy_guard.py", guard_hash)

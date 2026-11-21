@@ -4,5 +4,6 @@
 # release-3ee74fe.conf if retained. Verify effective ExecStart and drop-ins.
 [Service]
 Environment=PYTHONPATH=
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
 ExecStart=
-ExecStart=/opt/phantomdocs/matrix-releases/release-3ee74fe/bin/python -I -B /usr/local/lib/phantomdocs-matrix-pr72/launcher.py
+ExecStart=/usr/bin/python3.12 -I -S -B /usr/local/lib/phantomdocs-matrix-pr72/bootstrap.py

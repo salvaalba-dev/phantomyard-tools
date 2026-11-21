@@ -15,22 +15,43 @@ ACLs. Check all ancestors, existing ACLs and metadata before making any change;
 stop if that arrangement would broaden access. These are proposed settings,
 not a claim that installation or the dependency review has occurred.
 
-The launcher checks the PR #72 payload bytes and compiles those same bytes. The
-installed old host and guard hashes are snapshots; the old guard is subsequently
-imported by path and relies on protected ownership and permissions. The launcher
-recursively checks only the installed `phantomdocs` package. Python startup and
-other transitive imports, including system site-packages and binary extensions,
-are outside that verification. Python can process site files before the launcher
-starts, including when invoked with `-I`. A secure installation requires an
-independently verified startup and dependency manifest, including owner, mode,
-ACL, resolved path and SHA-256 for each relevant file, and a plan to detect
-drift. Checking `sys.path` inside the launcher alone cannot protect startup code
-that has already run. Determine why the actual dependency graph imports any
-secp256k1 library before accepting it; no such justification is established here.
+The service starts the Ubuntu Python 3.12 interpreter with `-I -S -B`.
+Python ignores environment import paths and skips site initialization, including
+`.pth` files and site customization. The bootstrap checks the exact initial
+search path and refuses an unexpected standard library ZIP. It verifies the
+approved inventory before adding the existing venv and distro package roots in
+order and invoking the launcher. The inventory includes directories, file link
+targets, SHA-256 for all regular files (including bytecode, package data and
+native Python extensions), owner, group, and mode. Effective POSIX ACL write
+grants are reflected in the group permission bits and cause rejection. Directory
+links are rejected. Adding, removing, replacing or changing a recorded entry
+requires review of a new inventory. The capture command writes JSON to stdout:
+
+```sh
+/usr/bin/python3.12 -I -S -B /path/to/reviewed/bootstrap.py capture
+```
+
+Run capture with the exact reviewed bootstrap, launcher and payload at their
+intended paths in a disposable copy of the target filesystem. Compare the
+inventory with trusted package and release records and independently review ACLs
+and link targets before approving it as `runtime-manifest.json` beside the
+bootstrap. Keep it root owned and free of group or other write access. Capture
+does not establish provenance by itself. The installed host and guard pins are
+snapshots. The guard still imports by path under protected ownership, while the
+payload executes from the exact verified buffer. The distro interpreter, ELF
+loader, OS libraries and stdlib needed by the bootstrap itself are part of the
+trusted OS base. The inventory detects later byte drift in the interpreter and
+stdlib, but cannot attest to the code already needed to run the check. Keep the
+runtime quiescent during root maintenance. The separate unprivileged worker
+continues to use its existing command and environment.
+
+The dependency on secp256k1 comes from `phantomdocs.signing`. Access validation
+imports its Nostr key conversion and the manifest imports its crypto version.
+Both paths load coincurve even for a read-only matrix request.
 
 Before deployment independently verify the complete current runtime, effective
 imports and exact pinned baseline against the live host, including the impact of
-`-I`, and validate root-owned protected directories and metadata on every parent
+`-I -S`, and validate root-owned protected directories and metadata on every parent
 and file before invoking Python. The tests use synthetic fixtures and do not
 prove compatibility with the production dependency graph. If checks fail, stop.
 Retain the old `candidate-20261110` release pending a separate inventory and

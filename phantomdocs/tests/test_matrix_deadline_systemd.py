@@ -19,6 +19,74 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")
+def test_manifest_checks_transitive_imports_before_running_launcher():
+    repo = Path(__file__).resolve().parents[1]
+    venv = Path(os.environ["PHANTOM_POLICY_TRIAL_PYTHON"]).parent.parent
+    (installed_site,) = (venv / "lib").glob("python*/site-packages")
+    with tempfile.TemporaryDirectory(
+        prefix="pd-overlay-manifest-", dir="/var/lib"
+    ) as tmp:
+        root = Path(tmp)
+        bootstrap = root / "bootstrap.py"
+        shutil.copyfile(repo / "contrib/matrix-overlay/bootstrap.py", bootstrap)
+        site = root / "site"
+        site.mkdir()
+        dependency = site / "dependency.py"
+        dependency.write_text("VALUE = 1\n")
+        (site / "direct.py").write_text("from dependency import VALUE\n")
+        (site / "startup.pth").write_text("import sys; sys.exit(99)\n")
+        subprocess_path = root / "entry.py"
+        subprocess_path.write_text(
+            "import runpy, sys\n"
+            "from pathlib import Path\n"
+            f"main = runpy.run_path({str(bootstrap)!r})['main']\n"
+            f"main.__globals__.update(SITES=(Path({str(site)!r}), Path({str(installed_site)!r})))\n"
+            "main()\n"
+        )
+        (root / "launcher.py").write_text(
+            "from phantomdocs import view_matrix_host\n"
+            "from direct import VALUE\n"
+            "assert callable(view_matrix_host.main)\n"
+            "print(VALUE)\n"
+        )
+        (root / "view_matrix_host.py").write_text("# fixture payload\n")
+        command = ["/usr/bin/python3.12", "-I", "-S", "-B", str(subprocess_path)]
+
+        def run(*args):
+            return subprocess.run(
+                [*command, *args],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+        captured = run("capture")
+        assert captured.returncode == 0, captured.stderr
+        (root / "runtime-manifest.json").write_text(captured.stdout)
+        valid = run()
+        assert valid.returncode == 0, valid.stderr
+        assert valid.stdout.strip() == "1"
+
+        dependency.write_text("VALUE = 2\n")
+        changed = run()
+        assert changed.returncode != 0
+        assert "differs from approved inventory" in changed.stderr
+        assert not changed.stdout
+        dependency.write_text("VALUE = 1\n")
+        added = site / "unreviewed.py"
+        added.touch()
+        assert run().returncode != 0
+        added.unlink()
+        dependency.chmod(0o666)
+        assert "unprotected runtime entry" in run().stderr
+        dependency.chmod(0o644)
+        dependency.rename(site / "target.py")
+        dependency.symlink_to("target.py")
+        assert "differs from approved inventory" in run().stderr
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")
 @pytest.mark.parametrize(
     "early_override", [False, True], ids=["example-name", "early-name"]
 )
@@ -29,8 +97,8 @@ def test_overlay_dropin_verifies_with_systemd(early_override):
     overlay_name = f"10-{installed_name}" if early_override else installed_name
     dropin = example.read_text()
     expected = (
-        "ExecStart=/opt/phantomdocs/matrix-releases/release-3ee74fe/bin/python "
-        "-I -B /usr/local/lib/phantomdocs-matrix-pr72/launcher.py"
+        "ExecStart=/usr/bin/python3.12 "
+        "-I -S -B /usr/local/lib/phantomdocs-matrix-pr72/bootstrap.py"
     )
     assert dropin.count("ExecStart=\n") == 1
     assert expected in dropin
@@ -50,7 +118,7 @@ def test_overlay_dropin_verifies_with_systemd(early_override):
         launcher = Path(tmp) / "launcher.py"
         launcher.write_text("pass\n")
         assert launcher.is_file()
-        actual = f"ExecStart=/usr/bin/python3 -I -B {launcher}"
+        actual = f"ExecStart=/usr/bin/python3 -I -S -B {launcher}"
         assert not unit.exists() and not directory.exists()
         try:
             unit.write_text("[Service]\nType=oneshot\nExecStart=/usr/bin/true\n")
@@ -72,7 +140,7 @@ def test_overlay_dropin_verifies_with_systemd(early_override):
                 assert "argv[]=/usr/bin/false ;" in effective
                 assert str(launcher) not in effective
             else:
-                assert f"argv[]=/usr/bin/python3 -I -B {launcher} ;" in effective
+                assert f"argv[]=/usr/bin/python3 -I -S -B {launcher} ;" in effective
                 assert "/usr/bin/false" not in effective
         finally:
             for item in ("release-3ee74fe.conf", overlay_name):
