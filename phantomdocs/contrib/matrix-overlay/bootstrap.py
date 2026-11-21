@@ -255,8 +255,12 @@ def main():
         raise ValueError("invalid runtime manifest command")
 
 
-if __name__ == "__main__":
+def cli():
     try:
         main()
     except (OSError, ValueError) as error:
         raise SystemExit(f"matrix runtime preflight failed: {error}") from None
+
+
+if __name__ == "__main__":
+    cli()

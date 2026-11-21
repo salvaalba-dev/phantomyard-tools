@@ -47,9 +47,9 @@ def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
         subprocess_path.write_text(
             "import runpy, sys\n"
             "from pathlib import Path\n"
-            f"main = runpy.run_path({str(bootstrap)!r})['main']\n"
-            f"main.__globals__.update(SITES=(Path({str(site)!r}), Path({str(installed_site)!r})))\n"
-            "main()\n"
+            f"cli = runpy.run_path({str(bootstrap)!r})['cli']\n"
+            f"cli.__globals__.update(SITES=(Path({str(site)!r}), Path({str(installed_site)!r})))\n"
+            "cli()\n"
         )
         (root / "launcher.py").write_text(
             "from phantomdocs import view_matrix_host\n"
