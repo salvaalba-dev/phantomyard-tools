@@ -1,6 +1,8 @@
 """Disposable systemd test for the matrix host deadline and real flock waits."""
 
+import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +16,123 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("PHANTOM_POLICY_SYSTEMD_TRIAL") != "1",
     reason="explicit disposable root/systemd rehearsal required",
 )
+
+
+def test_overlay_loader_with_real_systemd_and_contended_lock():
+    import fcntl
+
+    assert sys.platform == "linux" and os.geteuid() == 0
+    assert Path("/proc/1/comm").read_text().strip() == "systemd"
+    python = Path(os.environ["PHANTOM_POLICY_TRIAL_PYTHON"])
+    base = python.parent.parent
+    package = base / "lib/python3.12/site-packages/phantomdocs"
+    if not package.exists():
+        package = next((base / "lib").glob("python*/site-packages/phantomdocs"))
+    repo = Path(__file__).resolve().parents[1]
+    name = "pd-matrix-overlay-" + uuid.uuid4().hex + ".service"
+    unit = Path("/run/systemd/system") / name
+
+    def ctl(*args):
+        return subprocess.run(
+            ["/usr/bin/systemctl", "--no-pager", *args],
+            capture_output=True,
+            text=True,
+            timeout=75,
+            check=False,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="pd-overlay-", dir="/var/lib") as tmp:
+        root = Path(tmp)
+        loader = root / "launcher.py"
+        payload = root / "view_matrix_host.py"
+        shutil.copyfile(repo / "contrib/matrix-overlay/launcher.py", loader)
+        shutil.copyfile(repo / "contrib/matrix-overlay/view_matrix_host.py", payload)
+        for file in (loader, payload):
+            file.chmod(0o600)
+        config, first, second, marker = (
+            root / x for x in ("config", "first", "second", "held")
+        )
+        for file in (config, first, second):
+            file.touch(mode=0o600)
+
+        def sha(path):
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        script = root / "trial.py"
+        script.write_text(
+            "import fcntl, importlib.util, os, sys\n"
+            "from pathlib import Path\n"
+            f'spec=importlib.util.spec_from_file_location("candidate", {str(loader)!r})\n'
+            "candidate=importlib.util.module_from_spec(spec); spec.loader.exec_module(candidate)\n"
+            "def blocked(conn, config):\n"
+            f'    with open({str(first)!r}, "r+") as a, open({str(second)!r}, "r+") as b:\n'
+            "        fcntl.flock(a, fcntl.LOCK_EX)\n"
+            f"        Path({str(marker)!r}).touch()\n"
+            "        fcntl.flock(b, fcntl.LOCK_EX)\n"
+            "def trace(frame, event, arg):\n"
+            f'    if event == "call" and frame.f_code.co_name == "main" and frame.f_globals.get("__file__") == {str(payload)!r}:\n'
+            '        g=frame.f_globals; g["REQUEST_DEADLINE_SECONDS"]=1\n'
+            '        g["load_config"]=lambda path: {}\n'
+            '        g["socket"].socket=lambda fileno: (os.close(fileno) or object())\n'
+            '        g["serve_configured"]=blocked; sys.settrace(None)\n'
+            "    return trace\n"
+            "sys.settrace(trace)\n"
+            f"candidate.run(Path({str(base)!r}), Path({str(package)!r}), Path({str(payload)!r}), {str(config)!r}, "
+            f"{sha(package / 'view_matrix_host.py')!r}, {sha(package / 'workflow_policy_guard.py')!r}, {sha(payload)!r})\n"
+        )
+        script.chmod(0o600)
+        assert not unit.exists()
+        try:
+            unit.write_text(
+                f"[Service]\nType=oneshot\nExecStart={python} -I -B {script}\nTimeoutStartSec=5\n"
+            )
+            assert ctl("daemon-reload").returncode == 0
+            with second.open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                started = ctl("start", name)
+                assert started.returncode != 0
+                assert marker.exists(), started.stderr
+                assert (
+                    ctl("show", name, "--property=Result", "--value").stdout.strip()
+                    == "exit-code"
+                )
+                with first.open("r+") as released:
+                    fcntl.flock(released, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            ctl("stop", name)
+            ctl("reset-failed", name)
+            unit.unlink(missing_ok=True)
+            ctl("daemon-reload")
+
+
+def test_overlay_rejects_writable_or_symlinked_paths():
+    import importlib.util
+
+    assert sys.platform == "linux" and os.geteuid() == 0
+    repo = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "overlay_trial", repo / "contrib/matrix-overlay/launcher.py"
+    )
+    loader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loader)
+    with tempfile.TemporaryDirectory(prefix="pd-overlay-mode-", dir="/var/lib") as tmp:
+        root = Path(tmp)
+        item = root / "payload"
+        item.write_bytes(b"fixture")
+        item.chmod(0o600)
+        loader.protected(item)
+        item.chmod(0o620)
+        with pytest.raises(ValueError):
+            loader.protected(item)
+        item.chmod(0o600)
+        link = root / "link"
+        link.symlink_to(item)
+        with pytest.raises(ValueError):
+            loader.protected(link)
+        root.chmod(0o770)
+        with pytest.raises(ValueError):
+            loader.protected(item)
+        root.chmod(0o700)
 
 
 def test_systemd_deadline_releases_lock_and_runs_synthetic_failure_handler():
