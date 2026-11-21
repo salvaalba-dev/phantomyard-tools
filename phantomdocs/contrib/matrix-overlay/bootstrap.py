@@ -1,5 +1,6 @@
 """Verify the Python runtime inventory before enabling third-party imports."""
 
+import errno
 import hashlib
 import json
 import os
@@ -29,6 +30,17 @@ def require_protected(path, metadata):
         raise ValueError(f"unprotected runtime entry: {path}")
 
 
+def acl_metadata(path):
+    result = {}
+    for name in ("system.posix_acl_access", "system.posix_acl_default"):
+        try:
+            result[name] = os.getxattr(path, name, follow_symlinks=False).hex()
+        except OSError as error:
+            if error.errno not in {errno.ENODATA, errno.ENOTSUP}:
+                raise
+    return result
+
+
 def inventory(roots, files, absent):
     """Record every entry, including bytecode, package data and native extensions."""
     entries = {}
@@ -48,15 +60,14 @@ def inventory(roots, files, absent):
             "gid": meta.st_gid,
             "mode": stat.S_IMODE(meta.st_mode),
         }
+        entry["acl"] = acl_metadata(path)
         if stat.S_ISLNK(meta.st_mode):
             target = os.readlink(path)
             parts = Path(target).parts
             if ".." in dropwhile(lambda part: part == "..", parts):
                 raise ValueError(f"ambiguous runtime link: {path}")
             resolved = Path(os.path.abspath(path.parent / target))
-            record(resolved, following=following | {path})
-            if entries[resolved]["type"] not in {"file", "link"}:
-                raise ValueError(f"runtime link is not a file: {path}")
+            record(resolved, recurse=resolved.is_dir(), following=following | {path})
             entry.update(type="link", target=target)
         elif stat.S_ISDIR(meta.st_mode):
             entry["type"] = "directory"
@@ -74,11 +85,13 @@ def inventory(roots, files, absent):
         else:
             raise ValueError(f"unsupported runtime entry: {path}")
         entries[path] = entry
-        if recurse:
-            if entry["type"] != "directory":
-                raise ValueError(f"invalid import root: {path}")
+        if recurse and entry["type"] == "directory":
             for child in sorted(path.iterdir()):
-                record(child, recurse=child.is_dir() and not child.is_symlink())
+                record(
+                    child,
+                    recurse=child.is_dir() and not child.is_symlink(),
+                    following=following,
+                )
 
     for path in (*roots, *files, *absent):
         for parent in reversed(path.parents):
@@ -91,6 +104,8 @@ def inventory(roots, files, absent):
             raise ValueError(f"unexpected runtime path: {path}")
     for path in roots:
         record(path, recurse=True)
+        if entries[path]["type"] != "directory":
+            raise ValueError(f"invalid import root: {path}")
     for path in files:
         record(path)
     return {

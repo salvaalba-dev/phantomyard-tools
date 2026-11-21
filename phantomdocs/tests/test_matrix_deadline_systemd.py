@@ -35,6 +35,11 @@ def test_manifest_checks_transitive_imports_before_running_launcher():
         dependency.write_text("VALUE = 1\n")
         (site / "direct.py").write_text("from dependency import VALUE\n")
         (site / "startup.pth").write_text("import sys; sys.exit(99)\n")
+        package_data = root / "package-data"
+        package_data.mkdir()
+        resource = package_data / "resource"
+        resource.write_text("approved\n")
+        (site / "data").symlink_to("../package-data", target_is_directory=True)
         subprocess_path = root / "entry.py"
         subprocess_path.write_text(
             "import runpy, sys\n"
@@ -67,6 +72,10 @@ def test_manifest_checks_transitive_imports_before_running_launcher():
         valid = run()
         assert valid.returncode == 0, valid.stderr
         assert valid.stdout.strip() == "1"
+
+        resource.write_text("changed\n")
+        assert "differs from approved inventory" in run().stderr
+        resource.write_text("approved\n")
 
         dependency.write_text("VALUE = 2\n")
         changed = run()

@@ -22,9 +22,10 @@ search path and refuses an unexpected standard library ZIP. It verifies the
 approved inventory before adding the existing venv and distro package roots in
 order and invoking the launcher. The inventory includes directories, file link
 targets, SHA-256 for all regular files (including bytecode, package data and
-native Python extensions), owner, group, and mode. Effective POSIX ACL write
+native Python extensions), owner, group, mode and POSIX ACLs. Effective ACL write
 grants are reflected in the group permission bits and cause rejection. Directory
-links are rejected. Adding, removing, replacing or changing a recorded entry
+links are followed into their protected targets, including Babel's distro data.
+Adding, removing, replacing or changing a recorded entry
 requires review of a new inventory. The capture command writes JSON to stdout:
 
 ```sh
