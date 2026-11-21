@@ -33,9 +33,12 @@ requires review of a new inventory. The capture command writes JSON to stdout:
 /usr/bin/python3.12 -I -S -B /path/to/reviewed/bootstrap.py capture
 ```
 
-Run capture with the exact reviewed bootstrap, launcher and payload at their
-intended paths in a disposable copy of the target filesystem. Compare the
-inventory with trusted package and release records. Use `dpkg-query -S` to
+During the authorized maintenance window, capture the manifest on the target
+host with the reviewed files at their final paths. Use a disposable copy to
+rehearse and compare the stamp-free inventory. A manifest captured on the copy
+will have different device and inode values and will lose hash reuse on the
+host. Recapture any version 1 manifest because the verifier requires version 2.
+Compare the inventory with trusted package and release records. Use `dpkg-query -S` to
 identify distro-owned files, then `dpkg -V` or `debsums` for the corresponding
 packages and investigate differences and uncovered files. Verify local packages
 and native extensions against the approved release or wheel artifacts. Review
@@ -60,7 +63,10 @@ the local filesystem's metadata and the root-controlled manifest.
 
 Run the bootstrap with the same Python command and the `verify` argument to
 measure startup separately from the request. The report includes counts of
-hashed and reused files and a SHA-256 of the canonical inventory without
+unique hashed and reused paths, the paths rehashed, and added, removed and
+changed inventory paths. Inventory drift returns a nonzero exit status after
+emitting the report. Unsafe paths or malformed manifests can abort before a
+report is available. The report includes a SHA-256 of the canonical inventory without
 filesystem stamps. Record that digest in the review alongside the complete
 manifest SHA-256, which also binds the stamps. Approve the provenance evidence
 and inventory diff rather than manually reading the full JSON.

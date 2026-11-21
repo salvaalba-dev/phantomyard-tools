@@ -44,18 +44,42 @@ def inventory(roots, files, absent, approved=None):
     """Record every entry, including bytecode, package data and native extensions."""
     entries = {}
     stamps = {}
+    scanned = set()
+    active = set()
+    rehashed = []
     reused = hashed = 0
 
-    def record(path, recurse=False, following=frozenset()):
+    def check_parent(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            return
+        if parent not in entries:
+            record(parent)
+        if entries[parent]["type"] != "directory":
+            raise ValueError(f"non-directory runtime ancestor: {parent}")
+
+    def scan(path):
+        if path in scanned:
+            return
+        active.add(path)
+        try:
+            with os.scandir(path) as children:
+                for child in children:
+                    record(child.path, recurse=True, metadata=child)
+            scanned.add(path)
+        finally:
+            active.remove(path)
+
+    def record(path, recurse=False, metadata=None):
         nonlocal reused, hashed
-        if path in following or not path.is_absolute() or ".." in path.parts:
+        if path in active:
             raise ValueError(f"invalid runtime path: {path}")
-        for parent in reversed(path.parents):
-            if parent not in entries:
-                record(parent, following=following)
-            if entries[parent]["type"] != "directory":
-                raise ValueError(f"non-directory runtime ancestor: {parent}")
-        meta = path.lstat()
+        if path in entries:
+            if recurse and entries[path]["type"] == "directory":
+                scan(path)
+            return
+        check_parent(path)
+        meta = metadata.stat(follow_symlinks=False) if metadata else os.lstat(path)
         require_protected(path, meta)
         entry = {
             "uid": meta.st_uid,
@@ -64,30 +88,42 @@ def inventory(roots, files, absent, approved=None):
         }
         if stat.S_ISLNK(meta.st_mode):
             target = os.readlink(path)
-            parts = list(Path(target).parts)
+            parts = [part for part in target.split("/") if part not in {"", "."}]
+            if target.startswith("/") and ".." in parts:
+                raise ValueError(f"ambiguous runtime link: {path}")
             while parts and parts[0] == "..":
                 parts.pop(0)
             if not parts or ".." in parts:
                 raise ValueError(f"ambiguous runtime link: {path}")
-            resolved = Path(os.path.abspath(path.parent / target))
-            record(resolved, recurse=resolved.is_dir(), following=following | {path})
+            resolved = os.path.abspath(os.path.join(os.path.dirname(path), target))
+            active.add(path)
+            try:
+                record(resolved, recurse=True)
+            finally:
+                active.remove(path)
             entry.update(type="link", target=target)
         elif stat.S_ISDIR(meta.st_mode):
             entry["type"] = "directory"
         elif stat.S_ISREG(meta.st_mode):
-            key = str(path)
-            current = stamps[key] = stamp(meta)
-            previous = approved["entries"].get(key, {}) if approved else {}
+            current = stamps[path] = stamp(meta)
+            previous = approved["entries"].get(path, {}) if approved else {}
+            if not isinstance(previous, dict):
+                raise ValueError(f"invalid runtime manifest entry: {path}")
             if (
                 previous.get("type") == "file"
-                and approved["stamps"].get(key) == current
+                and approved["stamps"].get(path) == current
             ):
-                digest = previous["sha256"]
-                entry["acl"] = previous["acl"]
+                digest = previous.get("sha256")
+                acl = previous.get("acl")
+                if not isinstance(digest, str) or not isinstance(acl, dict):
+                    raise ValueError(f"invalid runtime manifest entry: {path}")
+                entry["acl"] = acl
                 reused += 1
             else:
                 digest = file_hash(path, current)
                 hashed += 1
+                if approved is not None:
+                    rehashed.append(path)
             entry.update(type="file", sha256=digest)
         else:
             raise ValueError(f"unsupported runtime entry: {path}")
@@ -95,19 +131,15 @@ def inventory(roots, files, absent, approved=None):
             entry["acl"] = acl_metadata(path)
         entries[path] = entry
         if recurse and entry["type"] == "directory":
-            for child in sorted(path.iterdir()):
-                record(
-                    child,
-                    recurse=True,
-                    following=following,
-                )
+            scan(path)
 
+    roots, files, absent = (
+        tuple(map(os.fspath, paths)) for paths in (roots, files, absent)
+    )
     for path in (*roots, *files, *absent):
-        for parent in reversed(path.parents):
-            if parent not in entries:
-                record(parent)
-            if entries[parent]["type"] != "directory":
-                raise ValueError(f"non-directory runtime ancestor: {parent}")
+        if not os.path.isabs(path) or os.path.normpath(path) != path:
+            raise ValueError(f"invalid runtime path: {path}")
+        check_parent(path)
     for path in absent:
         if os.path.lexists(path):
             raise ValueError(f"unexpected runtime path: {path}")
@@ -119,9 +151,9 @@ def inventory(roots, files, absent, approved=None):
         record(path)
     return {
         "version": 2,
-        "entries": {str(path): value for path, value in entries.items()},
+        "entries": entries,
         "stamps": stamps,
-    }, {"hashed": hashed, "reused": reused}
+    }, {"hashed": hashed, "reused": reused, "rehashed_paths": sorted(rehashed)}
 
 
 def file_hash(path, expected_stamp):
@@ -168,13 +200,19 @@ def verify_manifest(path, roots, files, absent, report=False):
     ):
         raise ValueError("invalid runtime manifest format")
     actual, counts = inventory(roots, files, absent, approved=expected)
-    if expected["entries"] != actual["entries"]:
+    before, after = expected["entries"], actual["entries"]
+    if not report and before != after:
         raise ValueError("runtime manifest differs from approved inventory")
     if not report:
         return None
     return {
         **counts,
-        "inventory_sha256": hashlib.sha256(encode(actual["entries"])).hexdigest(),
+        "added_paths": sorted(after.keys() - before.keys()),
+        "removed_paths": sorted(before.keys() - after.keys()),
+        "changed_paths": sorted(
+            path for path in before.keys() & after.keys() if before[path] != after[path]
+        ),
+        "inventory_sha256": hashlib.sha256(encode(after)).hexdigest(),
         "manifest_sha256": hashlib.sha256(encode(expected)).hexdigest(),
     }
 
@@ -201,17 +239,14 @@ def main():
         manifest, _ = inventory(roots, files, (ZIP_SLOT,))
         print(encode(manifest).decode())
     elif sys.argv[1:] == ["verify"]:
-        print(
-            encode(
-                verify_manifest(
-                    HERE / "runtime-manifest.json",
-                    roots,
-                    files,
-                    (ZIP_SLOT,),
-                    report=True,
-                )
-            ).decode()
+        report = verify_manifest(
+            HERE / "runtime-manifest.json", roots, files, (ZIP_SLOT,), report=True
         )
+        print(encode(report).decode())
+        if any(
+            report[key] for key in ("added_paths", "removed_paths", "changed_paths")
+        ):
+            raise ValueError("runtime manifest differs from approved inventory")
     elif not sys.argv[1:]:
         verify_manifest(HERE / "runtime-manifest.json", roots, files, (ZIP_SLOT,))
         sys.path.extend(map(str, SITES))

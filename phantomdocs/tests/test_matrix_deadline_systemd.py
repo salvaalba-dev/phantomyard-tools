@@ -35,6 +35,7 @@ def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
         site.mkdir()
         dependency = site / "dependency.py"
         dependency.write_text("VALUE = 1\n")
+        (site / "dependency-link.py").symlink_to("dependency.py")
         (site / "direct.py").write_text("from dependency import VALUE\n")
         (site / "startup.pth").write_text("import sys; sys.exit(99)\n")
         package_data = root / "package-data"
@@ -72,7 +73,10 @@ def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
         captured = run("capture")
         capture_elapsed = time.monotonic() - started
         assert captured.returncode == 0, captured.stderr
-        (root / "runtime-manifest.json").write_text(captured.stdout)
+        manifest_path = root / "runtime-manifest.json"
+        manifest_path.write_text(captured.stdout)
+        manifest = json.loads(captured.stdout)
+        assert run("capture").stdout == captured.stdout
         valid = run()
         assert valid.returncode == 0, valid.stderr
         assert valid.stdout.strip() == "1"
@@ -81,7 +85,8 @@ def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
         verify_elapsed = time.monotonic() - started
         assert verified.returncode == 0, verified.stderr
         report = json.loads(verified.stdout)
-        assert report["hashed"] == 0 and report["reused"] > 0
+        assert report["hashed"] == 0
+        assert report["reused"] == len(manifest["stamps"]) > 0
         with capsys.disabled():
             print(
                 f"Linux manifest fixture: capture={capture_elapsed:.3f}s "
@@ -95,12 +100,34 @@ def test_manifest_checks_transitive_imports_before_running_launcher(capsys):
         assert verified.returncode == 0, verified.stderr
         rehash = json.loads(verified.stdout)
         assert rehash["hashed"] == 1
+        assert rehash["rehashed_paths"] == [str(dependency)]
         assert rehash["inventory_sha256"] == report["inventory_sha256"]
         previous = dependency.stat()
         dependency.write_text("VALUE = 2\n")
         os.utime(dependency, ns=(previous.st_atime_ns, previous.st_mtime_ns))
         assert "differs from approved inventory" in run().stderr
+        added = site / "new.py"
+        added.touch()
+        removed = site / "direct.py"
+        prior_content = removed.read_bytes()
+        removed.unlink()
+        drift = run("verify")
+        assert drift.returncode != 0
+        paths = json.loads(drift.stdout)
+        assert paths["added_paths"] == [str(added)]
+        assert paths["removed_paths"] == [str(removed)]
+        assert paths["changed_paths"] == [str(dependency)]
+        added.unlink()
+        removed.write_bytes(prior_content)
         dependency.write_text("VALUE = 1\n")
+
+        del manifest["entries"][str(bootstrap)]["acl"]
+        manifest_path.write_text(json.dumps(manifest))
+        invalid = run()
+        assert invalid.returncode != 0
+        assert f"invalid runtime manifest entry: {bootstrap}" in invalid.stderr
+        assert "Traceback" not in invalid.stderr
+        manifest_path.write_text(captured.stdout)
 
         resource.write_text("changed\n")
         assert "differs from approved inventory" in run().stderr
