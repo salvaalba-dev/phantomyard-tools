@@ -6,9 +6,9 @@ contents atomically during a separately authorized change; two competing
 drop-ins can override one another according to their sorted filenames. Preserve
 the existing alert drop-in, socket, config and 65-second service timeout. Record
 and restore ownership, mode, ACL, exact bytes and effective command on rollback.
-If retaining `release-3ee74fe.conf`, the reviewed example must be named
-`zz-pr72.conf`; confirm it sorts after every other ExecStart override, including
-future ones, and verify the effective command after reload. Installation would
+If retaining `release-3ee74fe.conf`, use the example's filename without the
+`.example` suffix (`zz-pr72.conf`). Any name that sorts after all other
+ExecStart overrides works. Verify the effective command after reload. Installation would
 create `/usr/local/lib/phantomdocs-matrix-pr72` as root:root 0755 with the
 launcher and pinned payload root:root 0644, preserving restrictive existing
 ACLs. Check all ancestors, existing ACLs and metadata before making any change;

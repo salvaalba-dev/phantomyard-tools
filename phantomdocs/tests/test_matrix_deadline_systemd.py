@@ -19,9 +19,15 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="root required")
-def test_overlay_dropin_verifies_with_systemd():
+@pytest.mark.parametrize(
+    "early_override", [False, True], ids=["example-name", "early-name"]
+)
+def test_overlay_dropin_verifies_with_systemd(early_override):
     repo = Path(__file__).resolve().parents[1]
-    dropin = (repo / "contrib/matrix-overlay/release-pr72.conf.example").read_text()
+    (example,) = (repo / "contrib/matrix-overlay").glob("*.conf.example")
+    installed_name = example.stem
+    overlay_name = f"10-{installed_name}" if early_override else installed_name
+    dropin = example.read_text()
     expected = (
         "ExecStart=/opt/phantomdocs/matrix-releases/release-3ee74fe/bin/python "
         "-I -B /usr/local/lib/phantomdocs-matrix-pr72/launcher.py"
@@ -47,12 +53,12 @@ def test_overlay_dropin_verifies_with_systemd():
         actual = f"ExecStart=/usr/bin/python3 -I -B {launcher}"
         assert not unit.exists() and not directory.exists()
         try:
-            unit.write_text("[Service]\nType=oneshot\nExecStart=/usr/bin/false\n")
+            unit.write_text("[Service]\nType=oneshot\nExecStart=/usr/bin/true\n")
             directory.mkdir(mode=0o755)
             (directory / "release-3ee74fe.conf").write_text(
                 "[Service]\nExecStart=\nExecStart=/usr/bin/false\n"
             )
-            (directory / "zz-pr72.conf").write_text(dropin.replace(expected, actual))
+            (directory / overlay_name).write_text(dropin.replace(expected, actual))
             result = command("/usr/bin/systemd-analyze", "verify", str(unit))
             assert result.returncode == 0, result.stderr
             assert command("/usr/bin/systemctl", "daemon-reload").returncode == 0
@@ -60,12 +66,16 @@ def test_overlay_dropin_verifies_with_systemd():
                 "/usr/bin/systemctl", "show", name, "--property=ExecStart", "--value"
             )
             assert result.returncode == 0, result.stderr
-            assert (
-                str(launcher) in result.stdout and "/usr/bin/false" not in result.stdout
-            )
-            assert "-I -B" in result.stdout
+            effective = result.stdout
+            assert "/usr/bin/true" not in effective
+            if early_override:
+                assert "argv[]=/usr/bin/false ;" in effective
+                assert str(launcher) not in effective
+            else:
+                assert f"argv[]=/usr/bin/python3 -I -B {launcher} ;" in effective
+                assert "/usr/bin/false" not in effective
         finally:
-            for item in ("release-3ee74fe.conf", "zz-pr72.conf"):
+            for item in ("release-3ee74fe.conf", overlay_name):
                 (directory / item).unlink(missing_ok=True)
             if directory.exists():
                 directory.rmdir()
