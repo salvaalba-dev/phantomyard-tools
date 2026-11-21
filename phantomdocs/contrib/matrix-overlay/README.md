@@ -1,5 +1,9 @@
 # Matrix host overlay: review candidate
 
+Use the [production preparation gates](PRODUCTION_GATES.md) to record target
+inventory, timing, rehearsal, rollback and acceptance evidence. CI fixture
+results alone do not close these gates.
+
 This is a draft, not an installer and not approved for production. The unit
 drop-in is an example: remove the prior release-selection drop-in or replace its
 contents atomically during a separately authorized change; two competing
