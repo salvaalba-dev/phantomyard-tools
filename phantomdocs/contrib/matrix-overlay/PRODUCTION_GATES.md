@@ -143,9 +143,11 @@ tested rollback on acceptance failure under the agreed window procedure.
 
 ## Remaining blocker and next action
 
-Target evidence has not been supplied or independently captured in this review.
-The reviewing session has no configured SSH host or VPS connector. The next
-action is to establish an approved target access route or obtain the private
-operator evidence record, then review the existing target state read-only.
-Any final-path staging and later merge/deployment/activation require explicit
+The required privileged target evidence has not been supplied or independently
+verified in this review. Limited read-only inspection does not close the gates
+above. The next action is to obtain the private operator evidence record or an
+approved privileged read-only session for manifest/provenance review and target
+timing. Reconcile the actual effective configuration before proposing any change;
+never infer installation state solely from the PR state or repeat a completed
+step. Any further staging and later merge/deployment/activation require explicit
 authorization. Keep the production gates open until their dated evidence exists.
