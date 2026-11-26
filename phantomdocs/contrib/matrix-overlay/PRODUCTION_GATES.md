@@ -9,18 +9,24 @@ an approved private evidence location. Use synthetic data in this repository.
 ## Source validation and current limits
 
 Source and GitHub CI status rechecked on 2026-11-26 at PR head
-`bf2baa031b56b38654df8927557283b34cea264f`, with main at
+`51b124b3874ed8eae47a42513902a04b545a85d8`, with main at
 `aebe482c6ab583d98d976608879871984a4b2b80`. PR #73 was open, draft and
 unmerged. This document adds preparation criteria; it does not record a host run.
 
 Seven job checks across four workflows passed at that head: `pipeline`,
 `phantommeet`, `phantomorg`, `disposable-systemd`, `regression` (AU ingest),
 and `regression (3.10)` / `regression (3.12)` (document workflow contracts).
-The verified runs are [CI](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237869),
-[disposable systemd](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237921),
-[AU ingest](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237863)
-and [workflow contracts](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237855).
-These checks cover the published head, not later unpublished candidate changes.
+The verified runs are [CI](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505479),
+[disposable systemd](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505760),
+[AU ingest](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505225)
+and [workflow contracts](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505836).
+All four are `pull_request` runs recorded against that head. These checks cover
+the published head; a later commit invalidates them until it is pushed and re-run.
+
+An earlier revision of this section was verified at head
+`bf2baa031b56b38654df8927557283b34cea264f` (runs 44959237869, 44959237921,
+44959237863 and 44959237855); it is superseded by the head above and is kept
+only as history.
 
 Historical fixture results below belong to the 2026-11-21 review at
 `7637c0c3e623ef4b1bc702804d6ca934e3dcc297`; they are not timings for the current
