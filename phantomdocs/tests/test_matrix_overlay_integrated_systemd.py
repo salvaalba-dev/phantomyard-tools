@@ -69,6 +69,13 @@ with socket.socket(socket.AF_UNIX) as connection:
 """
 
 
+def assert_contention_budget(elapsed):
+    """Include bootstrap, socket response and observed service cleanup in 55/65."""
+    assert 55 <= elapsed < 65, (
+        f"full overlay contention must finish in [55, 65) seconds; got {elapsed:.6f}s"
+    )
+
+
 def test_full_bootstrap_socket_deadline_drift_and_rollback(capsys):
     import fcntl
 
@@ -318,11 +325,8 @@ def test_full_bootstrap_socket_deadline_drift_and_rollback(capsys):
                 response, elapsed = request()
                 assert response == ""
                 assert (state / "held").exists()
-                # The unit timeout is 65s; systemd signals at that point but a
-                # loaded runner can take seconds to reap it, so the ceiling is
-                # loose on purpose. The bound that matters is the floor: the
-                # request must not return before the timeout fires.
-                assert 55 <= elapsed < 80
+                # Runner/cleanup delay consumes headroom; it cannot extend it.
+                assert_contention_budget(elapsed)
                 failed = ctl(
                     "list-units",
                     "--failed",
@@ -341,7 +345,7 @@ def test_full_bootstrap_socket_deadline_drift_and_rollback(capsys):
                     fcntl.flock(released, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with capsys.disabled():
                 print(
-                    f"Full bootstrap forced rehash + 55s contention: {elapsed:.3f}s; kill-lag={max(0.0, elapsed - 65):.3f}s; files={report['hashed']}"
+                    f"Full bootstrap forced rehash + 55s contention: {elapsed:.3f}s; margin={65 - elapsed:.3f}s; files={report['hashed']}"
                 )
             (state / "mode").write_text("normal")
             manifest.write_bytes(approved)
