@@ -10,15 +10,17 @@ an approved private evidence location. Use synthetic data in this repository.
 
 Source and GitHub CI status rechecked on 2026-11-26 at reviewed code revision
 `51b124b3874ed8eae47a42513902a04b545a85d8`, with main at
-`aebe482c6ab583d98d976608879871984a4b2b80`. PR #73 was open, draft and
-unmerged. This document adds preparation criteria; it does not record a host run.
+`aebe482c6ab583d98d976608879871984a4b2b80`. PR #73 was open and unmerged, and
+at that revision it was still a draft; its current review readiness belongs in
+the pull request interface, not here. This document adds preparation criteria;
+it does not record a host run.
 
-That revision is the last one to touch the payload, the launcher, the bootstrap
-or the tests. Commits stacked on top of it change only this checklist and one
-test timing band, so they carry no payload bytes. A document inside the change
-never cites the runs of the commit that contains it — those do not exist until it
-is pushed — so the checks of the current PR head belong in the pull request
-interface, not here.
+That revision is the last one to touch the payload, the launcher or the
+bootstrap. Commits stacked on top of it change only this checklist and the
+timing assertion exercised by the systemd trial, so they carry no payload,
+launcher or bootstrap bytes. A document inside the change never cites the runs
+of the commit that contains it — those do not exist until it is pushed — so the
+checks of the current PR head belong in the pull request interface, not here.
 
 Seven job checks across four workflows passed at `51b124b`: `pipeline`,
 `phantommeet`, `phantomorg`, `disposable-systemd`, `regression` (AU ingest),
@@ -28,8 +30,10 @@ The verified runs are [CI](https://github.com/salvaalba-dev/phantomyard-tools/ac
 [AU ingest](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505225)
 and [workflow contracts](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505836).
 All four are `pull_request` runs recorded against that revision. Any later change
-to the payload, launcher, bootstrap or tests invalidates them until it is pushed
-and re-run.
+to the payload, launcher or bootstrap invalidates them until it is pushed and
+re-run. A later change to the trial's timing assertion invalidates the
+contention result specifically, and must be re-run on the disposable systemd
+job before it is cited again.
 
 An earlier revision of this section was verified at head
 `bf2baa031b56b38654df8927557283b34cea264f` (runs 44959237869, 44959237921,
