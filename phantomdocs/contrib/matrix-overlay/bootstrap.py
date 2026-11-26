@@ -33,7 +33,11 @@ def acl_metadata(path):
     result = {}
     for name in ("system.posix_acl_access", "system.posix_acl_default"):
         try:
-            result[name] = os.getxattr(path, name, follow_symlinks=False).hex()
+            if isinstance(path, int):
+                value = os.getxattr(path, name)
+            else:
+                value = os.getxattr(path, name, follow_symlinks=False)
+            result[name] = value.hex()
         except OSError as error:
             if error.errno not in {errno.ENODATA, errno.ENOTSUP}:
                 raise
@@ -48,6 +52,33 @@ def inventory(roots, files, absent, approved=None):
     active = set()
     rehashed = []
     reused = hashed = 0
+    hash_buffer = bytearray(256 * 1024)
+    pending = []
+
+    def hash_next():
+        path, expected, entry, descriptor = pending.pop(0)
+        try:
+            entry["sha256"] = file_hash(path, expected, hash_buffer, entry, descriptor)
+        finally:
+            os.close(descriptor)
+
+    def schedule_hash(path, expected, entry):
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode) or stamp(before) != expected:
+                raise ValueError(f"runtime entry changed: {path}")
+            try:
+                os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_WILLNEED)
+            except OSError as error:
+                if error.errno not in {errno.ENOSYS, errno.ENOTSUP}:
+                    raise
+        except BaseException:
+            os.close(descriptor)
+            raise
+        pending.append((path, expected, entry, descriptor))
+        if len(pending) >= 8:
+            hash_next()
 
     def check_parent(path):
         parent = os.path.dirname(path)
@@ -86,6 +117,7 @@ def inventory(roots, files, absent, approved=None):
             "gid": meta.st_gid,
             "mode": stat.S_IMODE(meta.st_mode),
         }
+        deferred_hash = False
         if stat.S_ISLNK(meta.st_mode):
             target = os.readlink(path)
             parts = [part for part in target.split("/") if part not in {"", "."}]
@@ -120,14 +152,17 @@ def inventory(roots, files, absent, approved=None):
                 entry["acl"] = acl
                 reused += 1
             else:
-                digest = file_hash(path, current)
+                digest = None
+                deferred_hash = True
+                schedule_hash(path, current, entry)
                 hashed += 1
                 if approved is not None:
                     rehashed.append(path)
-            entry.update(type="file", sha256=digest)
+            entry["type"] = "file"
+            entry.setdefault("sha256", digest)
         else:
             raise ValueError(f"unsupported runtime entry: {path}")
-        if "acl" not in entry:
+        if "acl" not in entry and not deferred_hash:
             entry["acl"] = acl_metadata(path)
         entries[path] = entry
         if recurse and entry["type"] == "directory":
@@ -136,19 +171,25 @@ def inventory(roots, files, absent, approved=None):
     roots, files, absent = (
         tuple(map(os.fspath, paths)) for paths in (roots, files, absent)
     )
-    for path in (*roots, *files, *absent):
-        if not os.path.isabs(path) or os.path.normpath(path) != path:
-            raise ValueError(f"invalid runtime path: {path}")
-        check_parent(path)
-    for path in absent:
-        if os.path.lexists(path):
-            raise ValueError(f"unexpected runtime path: {path}")
-    for path in roots:
-        record(path, recurse=True)
-        if entries[path]["type"] != "directory":
-            raise ValueError(f"invalid import root: {path}")
-    for path in files:
-        record(path)
+    try:
+        for path in (*roots, *files, *absent):
+            if not os.path.isabs(path) or os.path.normpath(path) != path:
+                raise ValueError(f"invalid runtime path: {path}")
+            check_parent(path)
+        for path in absent:
+            if os.path.lexists(path):
+                raise ValueError(f"unexpected runtime path: {path}")
+        for path in roots:
+            record(path, recurse=True)
+            if entries[path]["type"] != "directory":
+                raise ValueError(f"invalid import root: {path}")
+        for path in files:
+            record(path)
+        while pending:
+            hash_next()
+    finally:
+        for _path, _stamp, _entry, descriptor in pending:
+            os.close(descriptor)
     return {
         "version": 2,
         "entries": entries,
@@ -156,15 +197,41 @@ def inventory(roots, files, absent, approved=None):
     }, {"hashed": hashed, "reused": reused, "rehashed_paths": sorted(rehashed)}
 
 
-def file_hash(path, expected_stamp):
+def file_hash(path, expected_stamp, buffer=None, metadata=None, descriptor=None):
+    # A prefetched descriptor must still name the current protected path.
+    if descriptor is not None and stamp(os.lstat(path)) != expected_stamp:
+        raise ValueError(f"runtime entry changed: {path}")
+    # Raw reads avoid BufferedReader probes; the loop still requires EOF.
     with os.fdopen(
-        os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
+        os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        if descriptor is None
+        else descriptor,
+        "rb",
+        buffering=0,
+        closefd=descriptor is None,
     ) as stream:
         before = os.fstat(stream.fileno())
         if not stat.S_ISREG(before.st_mode) or expected_stamp != stamp(before):
             raise ValueError(f"runtime entry changed: {path}")
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        # Reuse inventory-owned scratch space; every file still reads to EOF.
+        # This serial buffer never crosses an inventory or worker boundary.
+        buffer = bytearray(256 * 1024) if buffer is None else buffer
+        digest_state = hashlib.sha256()
+        view = memoryview(buffer)
+        while True:
+            size = stream.readinto(buffer)
+            if size == 0:
+                break
+            if size is None:
+                raise BlockingIOError("runtime read would block")
+            digest_state.update(view[:size])
+        digest = digest_state.hexdigest()
+        if metadata is not None:
+            # Read both ACLs on the same verified inode before the final stamp.
+            metadata["acl"] = acl_metadata(stream.fileno())
         if expected_stamp != stamp(os.fstat(stream.fileno())):
+            raise ValueError(f"runtime entry changed: {path}")
+        if descriptor is not None and stamp(os.lstat(path)) != expected_stamp:
             raise ValueError(f"runtime entry changed: {path}")
     return digest
 

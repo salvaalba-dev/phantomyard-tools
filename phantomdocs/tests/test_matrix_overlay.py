@@ -83,7 +83,7 @@ def test_rejects_wrong_interpreter(runtime, monkeypatch, tmp_path):
         launcher.run(*runtime)
 
 
-def test_payload_matches_merged_git_blob():
-    assert (
-        digest((HERE / "view_matrix_host.py").read_bytes()) == launcher.PAYLOAD_SHA256
-    )
+def test_payload_and_launcher_pin_match_current_source():
+    source = HERE.parents[1] / "src/phantomdocs/view_matrix_host.py"
+    assert (HERE / "view_matrix_host.py").read_bytes() == source.read_bytes()
+    assert digest(source.read_bytes()) == launcher.PAYLOAD_SHA256

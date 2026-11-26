@@ -8,12 +8,23 @@ an approved private evidence location. Use synthetic data in this repository.
 
 ## Source validation and current limits
 
-Reviewed on 2026-11-21 at PR head
-`7637c0c3e623ef4b1bc702804d6ca934e3dcc297`, with main at
+Source and GitHub CI status rechecked on 2026-11-26 at PR head
+`bf2baa031b56b38654df8927557283b34cea264f`, with main at
 `aebe482c6ab583d98d976608879871984a4b2b80`. PR #73 was open, draft and
 unmerged. This document adds preparation criteria; it does not record a host run.
 
-All four reported workflows passed at that head. The
+Seven job checks across four workflows passed at that head: `pipeline`,
+`phantommeet`, `phantomorg`, `disposable-systemd`, `regression` (AU ingest),
+and `regression (3.10)` / `regression (3.12)` (document workflow contracts).
+The verified runs are [CI](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237869),
+[disposable systemd](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237921),
+[AU ingest](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237863)
+and [workflow contracts](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44959237855).
+These checks cover the published head, not later unpublished candidate changes.
+
+Historical fixture results below belong to the 2026-11-21 review at
+`7637c0c3e623ef4b1bc702804d6ca934e3dcc297`; they are not timings for the current
+head or the target host. That earlier
 [disposable systemd rehearsal](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/44893762104)
 completed 30 tests in 68.75 seconds. Its manifest fixture reported capture
 1.530 seconds, verification 0.079 seconds and 3,962 reused files. Those numbers

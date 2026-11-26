@@ -32,4 +32,4 @@ jobs:
           sudo /usr/bin/python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("Disposable runtime sources:"); [print(json.dumps({"name": p["metadata"]["name"], "version": p["metadata"]["version"], "source": p["download_info"]}, sort_keys=True)) for p in r["install"]]' "$trial_root/install-report.json"
           sudo env PHANTOM_POLICY_SYSTEMD_TRIAL=1 "PHANTOM_POLICY_TRIAL_PYTHON=$trial_root/venv/bin/python" \
             "PYTHONPATH=$PWD/src:$PWD/tests" PYTHONDONTWRITEBYTECODE=1 \
-            GITHUB_ACTIONS=true "$trial_root/venv/bin/python" -m pytest tests/test_policy_operations_systemd.py tests/test_notify_adapter_linux.py tests/test_disabled_alert_systemd.py tests/test_matrix_deadline_systemd.py tests/test_matrix_overlay_integrated_systemd.py -v
+            GITHUB_ACTIONS=true "$trial_root/venv/bin/python" -m pytest tests/test_policy_operations_systemd.py tests/test_notify_adapter_linux.py tests/test_disabled_alert_systemd.py tests/test_matrix_deadline_systemd.py tests/test_matrix_overlay_hash_buffer.py tests/test_matrix_overlay_integrated_systemd.py -v
