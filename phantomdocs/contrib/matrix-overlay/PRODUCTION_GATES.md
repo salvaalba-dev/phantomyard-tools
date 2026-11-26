@@ -8,20 +8,28 @@ an approved private evidence location. Use synthetic data in this repository.
 
 ## Source validation and current limits
 
-Source and GitHub CI status rechecked on 2026-11-26 at PR head
+Source and GitHub CI status rechecked on 2026-11-26 at reviewed code revision
 `51b124b3874ed8eae47a42513902a04b545a85d8`, with main at
 `aebe482c6ab583d98d976608879871984a4b2b80`. PR #73 was open, draft and
 unmerged. This document adds preparation criteria; it does not record a host run.
 
-Seven job checks across four workflows passed at that head: `pipeline`,
+That revision is the last one to touch the payload, the launcher, the bootstrap
+or the tests. Commits stacked on top of it change only this checklist and one
+test timing band, so they carry no payload bytes. A document inside the change
+never cites the runs of the commit that contains it — those do not exist until it
+is pushed — so the checks of the current PR head belong in the pull request
+interface, not here.
+
+Seven job checks across four workflows passed at `51b124b`: `pipeline`,
 `phantommeet`, `phantomorg`, `disposable-systemd`, `regression` (AU ingest),
 and `regression (3.10)` / `regression (3.12)` (document workflow contracts).
 The verified runs are [CI](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505479),
 [disposable systemd](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505760),
 [AU ingest](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505225)
 and [workflow contracts](https://github.com/salvaalba-dev/phantomyard-tools/actions/runs/45845505836).
-All four are `pull_request` runs recorded against that head. These checks cover
-the published head; a later commit invalidates them until it is pushed and re-run.
+All four are `pull_request` runs recorded against that revision. Any later change
+to the payload, launcher, bootstrap or tests invalidates them until it is pushed
+and re-run.
 
 An earlier revision of this section was verified at head
 `bf2baa031b56b38654df8927557283b34cea264f` (runs 44959237869, 44959237921,
@@ -88,7 +96,10 @@ filesystem; a disposable copy's device/inode stamps cannot substitute for it.
 ## 2. Verification timing and timeout accounting
 
 Measure elapsed time and exit status for capture and repeated `verify` calls on
-the target with `/usr/bin/python3.12 -I -S -B`. Retain every sample, hashed/reused
+the target with `/usr/bin/python3.12 -I -S -B`. Timings from revisions before
+`51b124b` are not comparable: the inventory reader now hashes on demand, reads
+with `POSIX_FADV_WILLNEED` and takes the access metadata from the same verified
+descriptor, so capture and reuse costs changed shape. Retain every sample, hashed/reused
 counts and rehashed paths. Identify warm versus cold conditions and how they
 were obtained; do not drop production caches or restart services for measurement
 without authorization. In a disposable environment also measure valid unchanged
