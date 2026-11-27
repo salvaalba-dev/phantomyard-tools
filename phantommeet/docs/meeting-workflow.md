@@ -5,6 +5,10 @@ This guide is for **human users** (chair, members, guests). It complements
 [SPEC.md](./SPEC.md) §6 (generic lifecycle) with a concrete, step-by-step
 example. No technical knowledge required.
 
+For installations with explicit departmental delivery, see
+[Explicit meeting routing](./explicit-routing.md). The requester must supply a
+department; the recording stays in HOLD until a valid destination is confirmed.
+
 > Reference deployment: a self-hosted Jitsi at `meet.example.invalid`, private
 > Nostr relay, persona bridge, local Whisper transcription + DeepSeek summary.
 > Replace the placeholders with your own deployment values.

@@ -21,6 +21,7 @@ import http.server
 import json
 import os
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -36,16 +37,25 @@ PERSONA = "maria"  # in invite.roles of the example manifest
 TOKEN = "test-admin-token"
 
 
-def _render_script(bridge_url: str, tmp_path: Path) -> Path:
+def _render_script(
+    bridge_url: str,
+    tmp_path: Path,
+    order_writer: list[str] | None = None,
+    org_file: Path | None = None,
+) -> Path:
     """Render the invite tool for PERSONA pointing at ``bridge_url``."""
     manifest = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     manifest.setdefault("invite", {})["bridge_status_url"] = bridge_url
+    if order_writer is not None:
+        manifest["invite"]["order_writer"] = order_writer
+    if org_file is not None:
+        manifest["invite"]["org_file"] = str(org_file)
     content = render_tool_content(
         manifest["invite"]["tool"], PERSONA, manifest, manifest["language"]
     )
     assert content is not None
     script = tmp_path / "meeting-invite.sh"
-    script.write_text(content, encoding="utf-8")
+    script.write_text(content, encoding="utf-8", newline="\n")
     script.chmod(0o755)
     return script
 
@@ -103,6 +113,7 @@ def _fake_phantombot(tmp_path: Path) -> tuple[Path, Path]:
         "msg=\"${*//$'\\n'/ }\"\n"
         'printf \'%s\\n\' "$msg" >> "$FAKE_PHANTOMBOT_LOG"\n',
         encoding="utf-8",
+        newline="\n",
     )
     stub.chmod(0o755)
     return bindir, log
@@ -116,6 +127,7 @@ def _run(
     token: str | None = TOKEN,
     force: bool = False,
     dry_run: bool = False,
+    extra_args: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess:
     args = [
         "--title",
@@ -129,6 +141,7 @@ def _run(
         args.append("--force")
     if dry_run:
         args.append("--dry-run")
+    args.extend(extra_args)
     env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
     env["FAKE_PHANTOMBOT_LOG"] = str(log)
     if token is None:
@@ -230,3 +243,199 @@ def test_dry_run_previews_without_notifying(tmp_path: Path) -> None:
     assert _log_lines(log) == []
     assert "Reunión: Junta directiva" in proc.stdout
     assert "not checked (--dry-run)" in proc.stdout
+
+
+def _order_writer(tmp_path: Path) -> list[str]:
+    """Deployment adapter stub: reject unknown destinations, log exact argv."""
+    writer = tmp_path / "order writer.py"
+    writer.write_text(
+        "import json, os, sys\n"
+        "args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
+        "if args['--department'] != 'operations': sys.exit(2)\n"
+        "with open(os.environ['FAKE_PHANTOMBOT_LOG'], 'a', encoding='utf-8') as f:\n"
+        "    f.write('order:' + json.dumps(args) + '\\n')\n",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(writer)]
+
+
+ROUTING_ARGS = ("--department", "operations", "--requester", "Test organizer")
+
+
+def test_order_precedes_invitation_and_preserves_literal_values(tmp_path: Path) -> None:
+    """The configured adapter receives the exact room and literal values first."""
+    with fake_bridge({"ready": True}) as url:
+        script = _render_script(url, tmp_path, _order_writer(tmp_path))
+        bindir, log = _fake_phantombot(tmp_path)
+        requester = "Test 'organizer'; $(touch should-not-exist)"
+        proc = _run(
+            script,
+            bindir,
+            log,
+            extra_args=("--department", "operations", "--requester", requester),
+        )
+    assert proc.returncode == 0, proc.stderr
+    lines = _log_lines(log)
+    assert len(lines) == 2 and lines[1].startswith("notify")
+    order = json.loads(lines[0].removeprefix("order:"))
+    room = next(
+        line.split(": ", 1)[1]
+        for line in proc.stdout.splitlines()
+        if line.startswith("room ")
+    )
+    assert order == {
+        "--room": room,
+        "--title": "Junta directiva",
+        "--requester": requester,
+        "--department": "operations",
+        "--ordered-by": PERSONA,
+    }
+    assert not (REPO / "should-not-exist").exists()
+
+
+def test_missing_routing_context_never_notifies(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status", tmp_path, _order_writer(tmp_path)
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    for args in ((), ("--department", "operations"), ("--requester", "Test organizer")):
+        proc = _run(script, bindir, log, force=True, extra_args=args)
+        assert proc.returncode == 2
+        assert "ask the requester" in proc.stderr
+        assert _log_lines(log) == []
+
+
+def test_rejected_department_withholds_even_with_force(tmp_path: Path) -> None:
+    with fake_bridge({"ready": False, "reason": "busy"}) as url:
+        script = _render_script(url, tmp_path, _order_writer(tmp_path))
+        bindir, log = _fake_phantombot(tmp_path)
+        proc = _run(
+            script,
+            bindir,
+            log,
+            force=True,
+            extra_args=("--department", "unknown", "--requester", "Test organizer"),
+        )
+    assert proc.returncode == 2
+    assert "order was not verified" in proc.stderr
+    assert _log_lines(log) == []
+
+
+def test_missing_writer_withholds_invitation(tmp_path: Path) -> None:
+    with fake_bridge({"ready": True}) as url:
+        script = _render_script(url, tmp_path, [str(tmp_path / "missing-writer")])
+        bindir, log = _fake_phantombot(tmp_path)
+        proc = _run(script, bindir, log, extra_args=ROUTING_ARGS)
+    assert proc.returncode == 2
+    assert _log_lines(log) == []
+
+
+def test_routing_dry_run_calls_neither_writer_nor_notify(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status", tmp_path, _order_writer(tmp_path)
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(script, bindir, log, dry_run=True, extra_args=ROUTING_ARGS)
+    assert proc.returncode == 0, proc.stderr
+    assert "writer not called, destination not verified" in proc.stdout
+    assert _log_lines(log) == []
+
+
+def test_routing_flags_without_adapter_fail_closed(tmp_path: Path) -> None:
+    script = _render_script("http://127.0.0.1:1/status", tmp_path)
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(script, bindir, log, dry_run=True, extra_args=ROUTING_ARGS)
+    assert proc.returncode == 2
+    assert "require invite.order_writer" in proc.stderr
+    assert _log_lines(log) == []
+
+
+def test_unready_recorder_does_not_write_order(tmp_path: Path) -> None:
+    with fake_bridge({"ready": False, "reason": "busy"}) as url:
+        script = _render_script(url, tmp_path, _order_writer(tmp_path))
+        bindir, log = _fake_phantombot(tmp_path)
+        proc = _run(script, bindir, log, extra_args=ROUTING_ARGS)
+    assert proc.returncode != 0
+    lines = _log_lines(log)
+    assert len(lines) == 1 and lines[0].startswith("notify")
+    assert "busy" in lines[0]
+
+
+def _write_org(tmp_path: Path) -> Path:
+    source = tmp_path / "org.yaml"
+    source.write_text(
+        yaml.safe_dump(
+            {
+                "departments": [{"id": "operations", "name": "Operations"}],
+                "roles": [{"id": "operator", "department": "operations"}],
+                "humans": [
+                    {"id": "organizer", "role": "operator", "telegram_user_id": 101}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return source
+
+
+def test_verified_sender_defaults_reach_order_before_notification(
+    tmp_path: Path,
+) -> None:
+    with fake_bridge({"ready": True}) as url:
+        script = _render_script(
+            url, tmp_path, _order_writer(tmp_path), _write_org(tmp_path)
+        )
+        bindir, log = _fake_phantombot(tmp_path)
+        proc = _run(
+            script,
+            bindir,
+            log,
+            extra_args=("--sender-channel", "telegram", "--sender-id", "101"),
+        )
+    assert proc.returncode == 0, proc.stderr
+    lines = _log_lines(log)
+    assert len(lines) == 2 and lines[1].startswith("notify")
+    order = json.loads(lines[0].removeprefix("order:"))
+    assert order["--requester"] == "organizer"
+    assert order["--department"] == "operations"
+    assert order["--ordered-by"] == PERSONA
+
+
+def test_unknown_sender_blocks_before_order_and_notification(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status",
+        tmp_path,
+        _order_writer(tmp_path),
+        _write_org(tmp_path),
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(
+        script,
+        bindir,
+        log,
+        force=True,
+        extra_args=("--sender-channel", "telegram", "--sender-id", "unknown"),
+    )
+    assert proc.returncode == 2
+    assert "context unresolved" in proc.stderr
+    assert _log_lines(log) == []
+
+
+def test_defaults_dry_run_reads_org_without_external_calls(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status",
+        tmp_path,
+        _order_writer(tmp_path),
+        _write_org(tmp_path),
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(
+        script,
+        bindir,
+        log,
+        dry_run=True,
+        extra_args=("--sender-channel", "telegram", "--sender-id", "101"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "department=operations" in proc.stdout
+    assert _log_lines(log) == []

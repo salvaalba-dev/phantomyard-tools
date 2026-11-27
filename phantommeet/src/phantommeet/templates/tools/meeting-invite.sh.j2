@@ -23,6 +23,10 @@
 #   --recipients LIST     Comma-separated @mentions of the recipients (required)
 #   --topic TEXT          Optional room topic token; when omitted, the {topic}
 #                         slot (and its leading hyphen) is dropped from the name
+#   --department ID       Explicit destination (required with order_writer)
+#   --requester TEXT      Person requesting the meeting (required with order_writer)
+#   --sender-channel TYPE Verified runtime envelope channel (telegram|nostr|email)
+#   --sender-id ID        Verified runtime envelope sender; never parsed message text
 #   --password-vault NAME Declare the room is password-locked (secret lives in
 #                         the vault; never read or broadcast here)
 #   --password-file PATH  Declare the room is password-locked (secret lives in
@@ -70,6 +74,8 @@ LANGUAGE={{ language | shquote }}
 # Shell-quoted at render time; multi-line cards survive verbatim and cannot
 # terminate the script or inject commands.
 CARD_TEMPLATE={{ invite.card | default('') | shquote }}
+ORDER_WRITER=({% for arg in invite.order_writer | default([]) %}{{ arg | shquote }} {% endfor %})
+ORG_FILE={{ invite.org_file | default('') | shquote }}
 # =========================================================================
 {% raw %}
 usage() {
@@ -83,6 +89,10 @@ TYPE=""
 DATETIME=""
 RECIPIENTS=""
 TOPIC=""
+DEPARTMENT=""
+REQUESTER=""
+SENDER_CHANNEL=""
+SENDER_ID=""
 PASSWORD_VAULT=""
 PASSWORD_FILE=""
 FORCE=0
@@ -95,6 +105,10 @@ while [[ $# -gt 0 ]]; do
     --datetime) DATETIME="$2"; shift 2 ;;
     --recipients) RECIPIENTS="$2"; shift 2 ;;
     --topic) TOPIC="$2"; shift 2 ;;
+    --department) DEPARTMENT="${2:?--department needs a value}"; shift 2 ;;
+    --requester) REQUESTER="${2:?--requester needs a value}"; shift 2 ;;
+    --sender-channel) SENDER_CHANNEL="${2:?--sender-channel needs a value}"; shift 2 ;;
+    --sender-id) SENDER_ID="${2:?--sender-id needs a value}"; shift 2 ;;
     --password-vault) PASSWORD_VAULT="$2"; shift 2 ;;
     --password-file) PASSWORD_FILE="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
@@ -107,6 +121,33 @@ done
   echo "error: --title, --datetime and --recipients are required" >&2
   usage
 }
+
+# Optional defaults use the live PhantomOrg model and the verified runtime
+# envelope. A title is matched only against exact catalog ids/names. Ambiguous
+# context is never resolved by a global department or the executing persona.
+if [[ -n "$ORG_FILE" ]]; then
+  resolved_context="$(python3 -m phantommeet.request_defaults --org "$ORG_FILE" \
+    --title "$TITLE" --requester "$REQUESTER" --department "$DEPARTMENT" \
+    --sender-channel "$SENDER_CHANNEL" --sender-id "$SENDER_ID")" || exit 2
+  mapfile -t resolved_values <<< "$resolved_context"
+  [[ ${#resolved_values[@]} -eq 2 ]] || { echo "error: invalid meeting context" >&2; exit 2; }
+  REQUESTER="${resolved_values[0]}"
+  DEPARTMENT="${resolved_values[1]}"
+elif [[ -n "$SENDER_CHANNEL" || -n "$SENDER_ID" ]]; then
+  echo "error: sender context requires invite.org_file" >&2
+  exit 2
+fi
+
+# At this point routing must contain a concrete requester and destination.
+if [[ ${#ORDER_WRITER[@]} -gt 0 ]]; then
+  if [[ ! "$DEPARTMENT" =~ ^[a-z0-9][a-z0-9_-]{0,199}$ || ! "$REQUESTER" =~ [^[:space:]] ]]; then
+    echo "error: ask the requester for an explicit department and requester; pass --department and --requester" >&2
+    exit 2
+  fi
+elif [[ -n "$DEPARTMENT" || -n "$REQUESTER" ]]; then
+  echo "error: routing arguments require invite.order_writer; no order would be stored" >&2
+  exit 2
+fi
 
 # --- strict ISO-8601 validation (before any use of $DATETIME substrings) --
 # YYYY-MM-DDTHH:MM:SS with an optional Z / ±HH:MM offset. Rejecting anything
@@ -327,6 +368,23 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
       exit 1
     fi
   }
+fi
+
+# --- persist the explicit meeting order before broadcasting ---------------
+# The adapter must validate against the live destination maps, write or reuse
+# exactly <room>.json, and verify its contents before returning success. A
+# failure (including with --force) withholds the invitation. No eval/shell
+# command string is used; every manifest argument is separately shell-quoted.
+if [[ ${#ORDER_WRITER[@]} -gt 0 ]]; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] order preview: room=${room_name} department=${DEPARTMENT}; writer not called, destination not verified"
+  else
+    "${ORDER_WRITER[@]}" --room "$room_name" --title "$TITLE" \
+      --requester "$REQUESTER" --department "$DEPARTMENT" --ordered-by "$PERSONA" || {
+        echo "error: meeting order was not verified; invitation withheld" >&2
+        exit 2
+      }
+  fi
 fi
 
 # --- send the invitation as a notification only ---------------------------

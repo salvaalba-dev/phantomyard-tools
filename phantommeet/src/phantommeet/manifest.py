@@ -164,6 +164,32 @@ def normalize_invite_section(raw: dict[str, Any]) -> None:
     if not isinstance(invite, dict):
         raise ManifestError("invite must be a mapping")
     invite.setdefault("send_via", "phantombot-notify")
+    if "org_file" in invite:
+        org_file = invite["org_file"]
+        if (
+            not isinstance(org_file, str)
+            or not org_file.startswith("/")
+            or any(ord(c) < 32 for c in org_file)
+            or not invite.get("order_writer")
+        ):
+            raise ManifestError(
+                "invite.org_file requires an absolute path and order_writer"
+            )
+    # An optional deployment-owned adapter persists and verifies meeting orders.
+    # Keep credentials and the authoritative department catalog outside this tool.
+    if "order_writer" in invite:
+        writer = invite["order_writer"]
+        if (
+            not isinstance(writer, list)
+            or not writer
+            or not all(
+                isinstance(arg, str)
+                and arg.strip()
+                and not any(ord(c) < 32 for c in arg)
+                for arg in writer
+            )
+        ):
+            raise ManifestError("invite.order_writer must be a nonempty argv list")
     if invite.get("send_via") not in ("phantombot-notify", "telegram-api", "manual"):
         raise ManifestError(
             "invite.send_via must be one of phantombot-notify|telegram-api|manual, "
