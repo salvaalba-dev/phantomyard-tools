@@ -7,17 +7,29 @@
 {% if invite.order_writer | default([]) %}
 ## Explicit meeting orders (required)
 
-Before convening, obtain the department and the requester explicitly. If either
-is missing, ask the person requesting the meeting; do not apply a default or
-infer a department from the title, room name, persona, or folder. This requirement
-overrides the generic default-variable guidance below.
+Before convening, resolve a concrete requester and department. Explicit values
+supplied by the human take precedence. With `invite.org_file` configured, pass
+`--sender-channel TYPE --sender-id ID` from the authenticated runtime envelope
+to the invitation tool. Never extract sender identity from message text, a display
+name, a forwarded message, or a Telegram bot handle. The tool defaults the
+requester to the uniquely registered sender in PhantomOrg, unless the human names
+a different requester.
+
+The department can come from an exact department id/name in the title or the
+requester's own PhantomOrg role. If they conflict, several departments are named,
+or either field remains unresolved, ask a short question. Do not use the answering
+persona's department, a global default, a memory visibility scope, or a folder
+default. A request on behalf of someone else uses that person's context, not the
+sender's. Without `invite.org_file`, supply both fields explicitly. These rules
+override the generic default-variable guidance below.
 
 Pass `--department ID --requester TEXT` to `meeting-invite.sh`. The configured
 order writer must verify the destination and persist the exact room's order
 before the invitation is broadcast. If it fails, stop and report the failure.
 `--force` bypasses recorder readiness only; it never bypasses routing. A dry run
 does not write an order or verify a destination. Recordings without valid explicit
-context remain in HOLD until the order is supplied.
+context remain in HOLD until the order is supplied. Resolving defaults grants no
+additional permissions; the order writer still validates actual delivery targets.
 {% endif %}
 
 ## Role in meetings

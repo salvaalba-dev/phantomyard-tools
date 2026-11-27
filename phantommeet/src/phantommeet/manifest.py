@@ -164,6 +164,17 @@ def normalize_invite_section(raw: dict[str, Any]) -> None:
     if not isinstance(invite, dict):
         raise ManifestError("invite must be a mapping")
     invite.setdefault("send_via", "phantombot-notify")
+    if "org_file" in invite:
+        org_file = invite["org_file"]
+        if (
+            not isinstance(org_file, str)
+            or not org_file.startswith("/")
+            or any(ord(c) < 32 for c in org_file)
+            or not invite.get("order_writer")
+        ):
+            raise ManifestError(
+                "invite.org_file requires an absolute path and order_writer"
+            )
     # An optional deployment-owned adapter persists and verifies meeting orders.
     # Keep credentials and the authoritative department catalog outside this tool.
     if "order_writer" in invite:

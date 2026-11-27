@@ -25,6 +25,8 @@
 #                         slot (and its leading hyphen) is dropped from the name
 #   --department ID       Explicit destination (required with order_writer)
 #   --requester TEXT      Person requesting the meeting (required with order_writer)
+#   --sender-channel TYPE Verified runtime envelope channel (telegram|nostr|email)
+#   --sender-id ID        Verified runtime envelope sender; never parsed message text
 #   --password-vault NAME Declare the room is password-locked (secret lives in
 #                         the vault; never read or broadcast here)
 #   --password-file PATH  Declare the room is password-locked (secret lives in
@@ -73,6 +75,7 @@ LANGUAGE={{ language | shquote }}
 # terminate the script or inject commands.
 CARD_TEMPLATE={{ invite.card | default('') | shquote }}
 ORDER_WRITER=({% for arg in invite.order_writer | default([]) %}{{ arg | shquote }} {% endfor %})
+ORG_FILE={{ invite.org_file | default('') | shquote }}
 # =========================================================================
 {% raw %}
 usage() {
@@ -88,6 +91,8 @@ RECIPIENTS=""
 TOPIC=""
 DEPARTMENT=""
 REQUESTER=""
+SENDER_CHANNEL=""
+SENDER_ID=""
 PASSWORD_VAULT=""
 PASSWORD_FILE=""
 FORCE=0
@@ -102,6 +107,8 @@ while [[ $# -gt 0 ]]; do
     --topic) TOPIC="$2"; shift 2 ;;
     --department) DEPARTMENT="${2:?--department needs a value}"; shift 2 ;;
     --requester) REQUESTER="${2:?--requester needs a value}"; shift 2 ;;
+    --sender-channel) SENDER_CHANNEL="${2:?--sender-channel needs a value}"; shift 2 ;;
+    --sender-id) SENDER_ID="${2:?--sender-id needs a value}"; shift 2 ;;
     --password-vault) PASSWORD_VAULT="$2"; shift 2 ;;
     --password-file) PASSWORD_FILE="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
@@ -115,7 +122,23 @@ done
   usage
 }
 
-# Never infer a destination from a title, room token, or installation default.
+# Optional defaults use the live PhantomOrg model and the verified runtime
+# envelope. A title is matched only against exact catalog ids/names. Ambiguous
+# context is never resolved by a global department or the executing persona.
+if [[ -n "$ORG_FILE" ]]; then
+  resolved_context="$(python3 -m phantommeet.request_defaults --org "$ORG_FILE" \
+    --title "$TITLE" --requester "$REQUESTER" --department "$DEPARTMENT" \
+    --sender-channel "$SENDER_CHANNEL" --sender-id "$SENDER_ID")" || exit 2
+  mapfile -t resolved_values <<< "$resolved_context"
+  [[ ${#resolved_values[@]} -eq 2 ]] || { echo "error: invalid meeting context" >&2; exit 2; }
+  REQUESTER="${resolved_values[0]}"
+  DEPARTMENT="${resolved_values[1]}"
+elif [[ -n "$SENDER_CHANNEL" || -n "$SENDER_ID" ]]; then
+  echo "error: sender context requires invite.org_file" >&2
+  exit 2
+fi
+
+# At this point routing must contain a concrete requester and destination.
 if [[ ${#ORDER_WRITER[@]} -gt 0 ]]; then
   if [[ ! "$DEPARTMENT" =~ ^[a-z0-9][a-z0-9_-]{0,199}$ || ! "$REQUESTER" =~ [^[:space:]] ]]; then
     echo "error: ask the requester for an explicit department and requester; pass --department and --requester" >&2

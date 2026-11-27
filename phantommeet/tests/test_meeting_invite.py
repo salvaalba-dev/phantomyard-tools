@@ -38,13 +38,18 @@ TOKEN = "test-admin-token"
 
 
 def _render_script(
-    bridge_url: str, tmp_path: Path, order_writer: list[str] | None = None
+    bridge_url: str,
+    tmp_path: Path,
+    order_writer: list[str] | None = None,
+    org_file: Path | None = None,
 ) -> Path:
     """Render the invite tool for PERSONA pointing at ``bridge_url``."""
     manifest = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     manifest.setdefault("invite", {})["bridge_status_url"] = bridge_url
     if order_writer is not None:
         manifest["invite"]["order_writer"] = order_writer
+    if org_file is not None:
+        manifest["invite"]["org_file"] = str(org_file)
     content = render_tool_content(
         manifest["invite"]["tool"], PERSONA, manifest, manifest["language"]
     )
@@ -354,3 +359,83 @@ def test_unready_recorder_does_not_write_order(tmp_path: Path) -> None:
     lines = _log_lines(log)
     assert len(lines) == 1 and lines[0].startswith("notify")
     assert "busy" in lines[0]
+
+
+def _write_org(tmp_path: Path) -> Path:
+    source = tmp_path / "org.yaml"
+    source.write_text(
+        yaml.safe_dump(
+            {
+                "departments": [{"id": "operations", "name": "Operations"}],
+                "roles": [{"id": "operator", "department": "operations"}],
+                "humans": [
+                    {"id": "organizer", "role": "operator", "telegram_user_id": 101}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return source
+
+
+def test_verified_sender_defaults_reach_order_before_notification(
+    tmp_path: Path,
+) -> None:
+    with fake_bridge({"ready": True}) as url:
+        script = _render_script(
+            url, tmp_path, _order_writer(tmp_path), _write_org(tmp_path)
+        )
+        bindir, log = _fake_phantombot(tmp_path)
+        proc = _run(
+            script,
+            bindir,
+            log,
+            extra_args=("--sender-channel", "telegram", "--sender-id", "101"),
+        )
+    assert proc.returncode == 0, proc.stderr
+    lines = _log_lines(log)
+    assert len(lines) == 2 and lines[1].startswith("notify")
+    order = json.loads(lines[0].removeprefix("order:"))
+    assert order["--requester"] == "organizer"
+    assert order["--department"] == "operations"
+    assert order["--ordered-by"] == PERSONA
+
+
+def test_unknown_sender_blocks_before_order_and_notification(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status",
+        tmp_path,
+        _order_writer(tmp_path),
+        _write_org(tmp_path),
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(
+        script,
+        bindir,
+        log,
+        force=True,
+        extra_args=("--sender-channel", "telegram", "--sender-id", "unknown"),
+    )
+    assert proc.returncode == 2
+    assert "context unresolved" in proc.stderr
+    assert _log_lines(log) == []
+
+
+def test_defaults_dry_run_reads_org_without_external_calls(tmp_path: Path) -> None:
+    script = _render_script(
+        "http://127.0.0.1:1/status",
+        tmp_path,
+        _order_writer(tmp_path),
+        _write_org(tmp_path),
+    )
+    bindir, log = _fake_phantombot(tmp_path)
+    proc = _run(
+        script,
+        bindir,
+        log,
+        dry_run=True,
+        extra_args=("--sender-channel", "telegram", "--sender-id", "101"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "department=operations" in proc.stdout
+    assert _log_lines(log) == []

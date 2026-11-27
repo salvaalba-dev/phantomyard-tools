@@ -7,6 +7,7 @@ contract. Existing installations without a writer retain their behavior.
 ```yaml
 invite:
   order_writer: [python3, /opt/example/meeting-order.py]
+  org_file: /opt/example/org.yaml  # optional live PhantomOrg source for defaults
 ```
 
 This is an argv list, never a shell command. The adapter is an operator-trusted
@@ -15,10 +16,37 @@ PhantomMeet does not install that adapter, grant Drive access, or provision
 destinations. Keep credentials in the existing runtime vault and use synthetic
 values in manifests published in this repository.
 
-With a writer configured, `meeting-invite.sh` requires `--department ID` and
-`--requester TEXT`. Ask the requester when either is missing. Never infer the
-department from the title, room, destination-folder default, or persona. An
-explicit department does not itself grant permission to that destination.
+With a writer configured, `meeting-invite.sh` must resolve a concrete department
+and requester. Without `org_file`, supply `--department ID --requester TEXT`.
+With `org_file`, the installed PhantomMeet Python package supplies defaults:
+
+1. Explicit requester and department arguments take precedence.
+2. Otherwise the requester is the unique PhantomOrg human/actor matching the
+   verified runtime envelope (`--sender-channel telegram|nostr|email --sender-id
+   ID`). Telegram uses the human's numeric `telegram_user_id`, Nostr uses `npub`,
+   and email uses the verified address. Display names and bot handles are not
+   authenticated sender identities. The invoker must pass metadata supplied by
+   its authenticated channel runtime, never values extracted from message text.
+   This tool has no direct access to the incoming channel session.
+3. The department defaults to a whole id/name mentioned in the title (case and
+   accents normalized) or the requester's own `role -> department` in the live
+   org file. This is deterministic catalog matching, not semantic guessing.
+   Substring matches, room names, persona defaults, and memory visibility scopes
+   are not used. Multiple title matches or disagreement with the requester's
+   department require a question; a subsequently explicit department resolves it.
+4. A different explicit requester uses their own context. If they are not in
+   PhantomOrg, supply an explicit department or a unique department in the title;
+   never reuse the original sender's department for someone else.
+
+An authenticated sender not yet in PhantomOrg is retained as a channel-qualified
+identity (for example `telegram:303`); no role or department is invented for them.
+If identity or destination remains unresolved, ask a short question before
+inviting. Invalid identities or duplicate sender bindings fail closed. The org file is read
+at each invocation, so role updates apply without a stale department cache.
+Install the updated PhantomMeet package in the same Python environment available
+as `python3` to the generated tool. The runtime must bind sender identities before
+these defaults can operate; configuring `org_file` alone does not authenticate a
+channel. A selected department never grants permission to that destination.
 
 After recorder preflight succeeds (or is overridden with `--force`) and before
 broadcasting, the tool invokes:

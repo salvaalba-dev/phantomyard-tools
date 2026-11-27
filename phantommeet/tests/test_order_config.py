@@ -28,6 +28,7 @@ def test_reapply_preserves_adapter_and_owned_sections(
     manifest = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     manifest["language"] = language
     manifest["invite"]["order_writer"] = ["python3", "/opt/example/meeting-order.py"]
+    manifest["invite"]["org_file"] = "/opt/example/org.yaml"
     source = tmp_path / "manifest.yaml"
     source.write_text(yaml.safe_dump(manifest), encoding="utf-8")
     target = tmp_path / "personas"
@@ -46,7 +47,28 @@ def test_reapply_preserves_adapter_and_owned_sections(
     )
     assert "Operator-owned note." in kb.read_text(encoding="utf-8")
     assert "--department" in kb.read_text(encoding="utf-8")
+    assert "ORG_FILE=/opt/example/org.yaml" in tool.read_text(encoding="utf-8")
     assert (
         _persona_context("maria", load_manifest(source))["invite"]["order_writer"]
         == manifest["invite"]["order_writer"]
     )
+
+
+@pytest.mark.parametrize("org_file", [None, "", "relative/org.yaml", 42, "/bad\npath"])
+def test_invalid_org_source_rejected(tmp_path: Path, org_file: object) -> None:
+    manifest = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    manifest["invite"]["order_writer"] = ["writer"]
+    manifest["invite"]["org_file"] = org_file
+    source = tmp_path / "manifest.yaml"
+    source.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="org_file"):
+        load_manifest(source)
+
+
+def test_defaults_cannot_bypass_order_writer(tmp_path: Path) -> None:
+    manifest = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+    manifest["invite"]["org_file"] = "/opt/example/org.yaml"
+    source = tmp_path / "manifest.yaml"
+    source.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="order_writer"):
+        load_manifest(source)
