@@ -4,6 +4,22 @@
 > marcadores `<!-- phantommeet:start/end -->` se regenera al re-aplicar;
 > lo que añadas fuera de los marcadores se conserva.
 
+{% if invite.order_writer | default([]) %}
+## Explicit meeting orders (required)
+
+Before convening, obtain the department and the requester explicitly. If either
+is missing, ask the person requesting the meeting; do not apply a default or
+infer a department from the title, room name, persona, or folder. This requirement
+overrides the generic default-variable guidance below.
+
+Pass `--department ID --requester TEXT` to `meeting-invite.sh`. The configured
+order writer must verify the destination and persist the exact room's order
+before the invitation is broadcast. If it fails, stop and report the failure.
+`--force` bypasses recorder readiness only; it never bypasses routing. A dry run
+does not write an order or verify a destination. Recordings without valid explicit
+context remain in HOLD until the order is supplied.
+{% endif %}
+
 ## Rol en reuniones
 
 - Eres: **{{ role_label }}**
